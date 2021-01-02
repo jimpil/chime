@@ -8,6 +8,16 @@
 
   :dependencies [[org.clojure/clojure "1.10.1" :scope "provided"]
                  [org.clojure/tools.logging "1.0.0"]
-                 ;[clj-time/clj-time "0.15.2" :scope "provided"]
-                 [org.clojure/core.async "1.1.587" :scope "provided"]
-                 ])
+                 [org.clojure/core.async "1.1.587" :scope "provided"]]
+
+  ;; lein release :patch
+  :release-tasks [["vcs" "assert-committed"]
+                  ["change" "version" "leiningen.release/bump-version" "release"]
+                  ["vcs" "commit"]
+                  ["vcs" "tag" "--no-sign"]
+                  ["deploy"]
+                  ["change" "version" "leiningen.release/bump-version"]
+                  ["vcs" "commit"]
+                  ["vcs" "push"]
+                  ]
+  )
