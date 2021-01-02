@@ -5,8 +5,10 @@
 (defn chiming-agent
   "Returns an `agent` dressed up as a scheduler.
    Can be configured with an :error-handler (1/2 args),
-   and :on-finished (no-args). Use it as the first
-   argument to `schedule!`/`unschedule!`."
+   and :on-finished (no-args). The state of the agent is
+   a map from job-id => chime-return, and it will grow/shrink
+   as jobs are scheduled/un-scheduled (or finished). Use it
+   as the first argument to `schedule!`/`unschedule!`."
   ([]
    (chiming-agent nil))
   ([{:keys [error-handler on-finished]

@@ -67,7 +67,7 @@
 
   (^AutoCloseable [times f] (chime-at times f nil))
 
-  (^AutoCloseable [times f {:keys [error-handler on-finished thread-factory clock]
+  (^AutoCloseable [times f {:keys [error-handler on-finished thread-factory clock drop-overruns?]
                             :or {error-handler  default-error-handler
                                  thread-factory default-thread-factory ;; loom-friendly (i.e. virtual threads)
                                  clock          utc-clock}}]
@@ -98,8 +98,12 @@
                            (close)))]
 
                  (if time
-                   (->> (.schedule pool ^Runnable task (.between ChronoUnit/MILLIS (now clock) time) TimeUnit/MILLISECONDS)
-                        (reset! current))
+                   (let [dlay (.between ChronoUnit/MILLIS (now clock) time)]
+                     (if (or (pos? dlay)
+                             (not drop-overruns?))
+                       (->> (.schedule pool ^Runnable task dlay TimeUnit/MILLISECONDS)
+                            (reset! current))
+                       (recur times)))
                    (close))))]
 
        (schedule-loop (map to-instant times))
@@ -127,8 +131,7 @@
              (.getDelay fut time-unit)))
          (isCancelled [_]
            (when-let [^ScheduledFuture fut @current]
-             (.isCancelled fut)))
-         )))))
+             (.isCancelled fut))))))))
 
 ;; HIGH-LEVEL API REFLECTING THE SEMANTICS OF THE CONSTRUCT ABOVE
 ;; ==============================================================
@@ -154,7 +157,8 @@
    (.getDelay sched time-unit)))
 
 (defn cancel-next?!
-  "Like `cancel-next!`, but only if the next task hasn't already started."
+  "Like `cancel-next!`, but only if the next task
+   hasn't already started (millisecond tolerance)."
   [^ScheduledFuture sched]
   (when (pos? (until-next sched))
     (cancel-next! sched)))
@@ -187,7 +191,7 @@
 
 (defn next-at
   "Returns the (future) `Instant` when the next chime will occur,
-   or nil if it has already started."
+   or nil if it has already started (millisecond tolerance)."
   (^Instant [sched]
    (next-at sched utc-clock))
   (^Instant [sched clock]
