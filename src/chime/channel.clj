@@ -9,10 +9,11 @@
 
   Arguments:
     times - (required) Sequence of java.util.Dates, java.time.Instant,
-                       java.time.ZonedDateTime or msecs since epoch
+                       java.time.ZonedDateTime, java.time.OffsetDateTime, or msecs since epoch
 
-    ch    - (optional) Channel to chime on - defaults to a new unbuffered channel
-                       Closing this channel stops the schedule.
+    buffer - (optional but STRONGLY advised) Buffering semantics for the underlying write-channel
+    error-handler - (optional) See `chime-at`
+    on-finished - (optional) See `chime-at`
 
   Usage:
 
