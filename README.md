@@ -29,7 +29,7 @@ and are short of reading material, check [this](https://github.com/jarohen/chime
 
 Given the breaking nature of my vision/suggestions, it was mutually decided to instead fork and re-release as `jimpil/chime`.
 
-## Structural differences
+## Practical implications
 In order to avoid namespace collisions, this project has a slightly different project structure. The mapping is as follows:
 
 - `chime.core` has become `chime.schedule`
@@ -38,6 +38,11 @@ In order to avoid namespace collisions, this project has a slightly different pr
 Furthermore, `chime.joda-time` and `chime.utils` don't exist here. `chime.joda-time` and the `clj-time` dependency are gone for good,
 whereas the single function `merge-schedules` in `chime.utils` has been migrated to a brand new `chime.times` namespace, which contains
 anything related to generating times (i.e. `periodic-seq`, `without-past-times` etc).
+
+It will hopefully become apparent later on, but the single most important difference is how the two projects handle 'closing the schedule'.
+`jarohen/chime` takes it upon itself to also cancel the (potentially already started) next-task (via `shutdownNow`), whereas `jimpil/chime` 
+lets you decide on those two things separately. This also affects how errors are handled in the two projects 
+(i.e. the default error-handler in `jimpil/chime` doesn't need to assign any particular importance to `InterruptedException` - this is up to the end-user to decide).     
 
 Finally, this project aims to provide a higher-level (than `chime-at`), stateful scheduler construct which can deal which multiple jobs.
 
@@ -55,7 +60,7 @@ It returns an implementation of:
 - `AutoCloseable` - reflecting the closeable nature of the schedule as a whole (NOT concerned with already scheduled tasks) 
 - `IPending` - reflecting the potentially finite nature of the schedule
 - `IDeref`/`IBlockingDeref` - reflecting the optionally blocking nature of the schedule
-- `ScheduledFuture` (partially) - reflecting the currently scheduled task
+- `ScheduledFuture` (partially) - representing the currently scheduled task
 
 If you're confident you understand that the first 3 are about the entire schedule, 
 whereas the last one is about a single task, you can use the returned object as is.
@@ -84,11 +89,16 @@ the next-task VS the entire-schedule separately - and this is essentially the cr
 Returns a readable `core.async` channel that 'chimes' at every time in the `times` list.
 Unlike `jarohen/chime`, you're not allowed to pass in a `:ch` param, but you can pass a `:buffer` instead. 
 Uses `chime-at` internally, so you can also pass `:error-handler`, and/or `:on-finished` callbacks.
-Closing the returned channel (gracefully) stops the schedule.
-
-
+Closing the returned read-channel (gracefully) stops the schedule, and closes the underlying write-channel (where the chime-fn writes).
+This means that no more writes will succeed (even if there is something already scheduled).  
+ 
 ## Notes
 The project was forked in its `v0.3.2` state (actually a little later but not super important). 
+
+
+## Requirements 
+
+- Java 8 or above (for `java.time`)
 
 ## License
 
