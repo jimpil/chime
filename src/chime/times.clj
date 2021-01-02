@@ -1,8 +1,10 @@
 (ns chime.times
-  (:import (java.util Date)
-           (java.time Instant ZonedDateTime OffsetDateTime Duration Period LocalTime)
+  (:require [clojure.string :as str])
+  (:import (java.util Date Locale)
+           (java.time Instant ZonedDateTime OffsetDateTime Duration Period LocalTime ZoneId DayOfWeek LocalDateTime YearMonth LocalDate Month)
            (java.time.temporal TemporalAmount)
-           (java.sql Timestamp)))
+           (java.sql Timestamp)
+           (java.time.format TextStyle)))
 
 (defprotocol ->Instant
   (->instant [obj]
@@ -69,16 +71,28 @@
 ;; USEFUL PERIODS
 ;; ==============
 
+(defn every-n-millis
+  "Returns an infinite sequence of successive `Instant` objects <n> second(s) apart
+  (defaults to 1), starting at <from> (defaults to `Instant/now`)."
+  ([]
+   (every-n-millis 100))
+  ([n]
+   (-> (Instant/now)
+       (every-n-millis n)
+       next))
+  ([from n]
+   (periodic-seq from (Duration/ofMillis n))))
+
 (defn every-n-seconds
   "Returns an infinite sequence of successive `Instant` objects <n> second(s) apart
   (defaults to 1), starting at <from> (defaults to `Instant/now`)."
   ([]
    (every-n-seconds 1))
   ([n]
-   (->> (Instant/now)
-        (every-n-seconds n)
-        next))
-  ([n from]
+   (-> (Instant/now)
+       (every-n-seconds n)
+       next))
+  ([from n]
    (periodic-seq from (Duration/ofSeconds n))))
 
 (defn every-n-minutes
@@ -87,10 +101,10 @@
   ([]
    (every-n-minutes 1))
   ([n]
-   (->> (Instant/now)
-        (every-n-minutes n)
-        rest))
-  ([n from]
+   (-> (Instant/now)
+       (every-n-minutes n)
+       rest))
+  ([from n]
    (periodic-seq from (Duration/ofMinutes n))))
 
 (defn every-n-hours
@@ -99,10 +113,10 @@
   ([]
    (every-n-hours 1))
   ([n]
-   (->> (Instant/now)
-        (every-n-hours n)
-        next))
-  ([n from]
+   (-> (Instant/now)
+       (every-n-hours n)
+       next))
+  ([from n]
    (periodic-seq from (Duration/ofHours n))))
 
 (defn every-n-days
@@ -111,32 +125,146 @@
   ([]
    (every-n-days 1))
   ([n]
-   (->> (Instant/now)
-        (every-n-days n)
-        next))
-  ([n from]
+   (-> (Instant/now)
+       (every-n-days n)
+       next))
+  ([from n]
    (periodic-seq from (Period/ofDays n))))
 
-(defn every-n-weeks
-  "Returns an infinite sequence of successive `Instant` objects <n> weeks apart
-  (defaults to 1), starting at <from> (defaults to `Instant/now`)."
-  ([]
-   (every-n-weeks 1))
-  ([n]
-   (->> (Instant/now)
-        (every-n-weeks n)
-        next))
-  ([n from]
-   (periodic-seq from (Period/ofWeeks n))))
+;;==========================================
+(defonce WORKDAYS
+  #{DayOfWeek/MONDAY
+    DayOfWeek/TUESDAY
+    DayOfWeek/WEDNESDAY
+    DayOfWeek/THURSDAY
+    DayOfWeek/FRIDAY})
 
-(defn every-n-months
-  "Returns an infinite sequence of successive `Instant` objects <n> months apart
-  (defaults to 1), starting at <from> (defaults to `Instant/now`)."
+(defonce WEEKEND
+  #{DayOfWeek/SATURDAY
+    DayOfWeek/SUNDAY})
+
+(defn every-day-at
   ([]
-   (every-n-months 1))
-  ([n]
-   (->> (Instant/now)
-        (every-n-months n)
-        next))
-  ([n from]
-   (periodic-seq from (Period/ofMonths n))))
+   (every-day-at (LocalTime/of 0 0)))
+  ([^LocalTime lt]
+   (-> lt
+       (.adjustInto (ZonedDateTime/now (ZoneId/systemDefault)))
+       (every-n-days 1))))
+
+(defn some-days-at
+  ([days-set]
+   (some-days-at days-set (LocalTime/of 0 0)))
+  ([days-set ^LocalTime lt]
+   (->> (every-day-at lt)
+        (filter (comp days-set #(.getDayOfWeek ^ZonedDateTime %))))))
+
+(defn every-workday-at
+  "Returns an infinite sequence of week-days (Mon-Fri)
+   (ZonedDateTime instances at time <lt>)."
+  ([]
+   (every-workday-at (LocalTime/of 0 0)))
+  ([^LocalTime lt]
+   (some-days-at WORKDAYS lt)))
+
+(defn every-weekend-at
+  "Returns an infinite sequence of week-ends (Sat/Sun)
+   (ZonedDateTime instances at time <lt>)."
+  ([]
+   (every-weekend-at (LocalTime/of 0 0)))
+  ([^LocalTime lt]
+   (some-days-at WEEKEND lt)))
+
+(defn every-days-of-month-at
+  [days ^LocalTime lt]
+  (->> (some-days-at days lt)                            ;; all relevant days
+       (partition-by #(.getMonth ^ZonedDateTime %)))) ;; partitioned into months
+
+(defn every-first-day-of-month-at
+  "Returns an infinite sequence of first <day> (e.g. Monday) in
+   every month (ZonedDateTime instances at time <lt>)."
+  ([day]
+   (every-first-day-of-month-at day (LocalTime/of 0 0)))
+  ([^DayOfWeek day ^LocalTime lt]
+   (->> (every-days-of-month-at #{day} lt)
+        (map first))))
+
+(defn every-last-day-of-month-at
+  "Returns an infinite sequence of last <day> (e.g. Monday) in
+   every month (ZonedDateTime instances at time <lt>)."
+  ([day]
+   (every-last-day-of-month-at day (LocalTime/of 0 0)))
+  ([^DayOfWeek day ^LocalTime lt]
+   (->> (every-days-of-month-at #{day} lt)
+        (map last))))
+
+(defn every-first-working-day-of-month-at
+  "Returns an infinite sequence of first working-day in
+   every month (ZonedDateTime instances at time <lt>)."
+  ([]
+   (every-first-working-day-of-month-at (LocalTime/of 0 0)))
+  ([^LocalTime lt]
+   (->> (every-days-of-month-at WORKDAYS lt)
+        (map first))))
+
+(defn every-last-working-day-of-month-at
+  "Returns an infinite sequence of last working-day in
+   every month (ZonedDateTime instances at time <lt>)."
+  ([]
+   (every-last-working-day-of-month-at (LocalTime/of 0 0)))
+  ([^LocalTime lt]
+   (->> (every-days-of-month-at WORKDAYS lt)
+        (map last))))
+;;========================================================
+(defonce MONTHS
+  (let [months (map #(Month/of %) (range 1 13))]
+    (zipmap (map #(.getDisplayName ^Month % TextStyle/FULL Locale/UK) months)
+            months)))
+
+(defn months*
+  "Returns a set of Month objects, as specified by <months>.
+   These can be either month-indices (1-12), or month-names
+   (e.g. 'January', 'February' etc). Keywords are also supported."
+  [& months]
+  (->> months
+       (map (fn [m]
+              (if (string? m)
+                (get MONTHS m)
+                (if (keyword? m)
+                  (recur (str/capitalize (name m)))
+                  (Month/of m)))))
+       set))
+
+(defn every-month-at
+  ([]
+   (every-month-at 1))
+  ([month-day]
+   (every-month-at month-day (LocalTime/of 0 0)))
+  ([^long month-day ^LocalTime lt]
+   (-> (LocalDateTime/of
+          (.withDayOfMonth (LocalDate/now) month-day)
+          lt)
+        (.adjustInto (ZonedDateTime/now (ZoneId/systemDefault)))
+       (periodic-seq (Period/ofMonths 1))
+       next)))
+
+(defn some-months-at
+  ([months-set]
+   (some-months-at months-set 1))
+  ([months-set month-day]
+   (some-months-at months-set month-day (LocalTime/of 0 0)))
+  ([months-set ^long month-day ^LocalTime lt]
+   (->> (every-month-at month-day lt)
+        (filter (comp months-set #(.getMonth ^ZonedDateTime %))))))
+
+(defn every-month-end-at
+  ([]
+   (every-month-end-at (LocalTime/of 0 0)))
+  ([^LocalTime lt]
+   (->> (every-month-at 1 lt)
+        (map (fn [^ZonedDateTime zdt]
+               (-> (YearMonth/from zdt)
+                   .atEndOfMonth ;; `java.time` is awesome!
+                   (LocalDateTime/of lt)
+                   (ZonedDateTime/of (.getZone zdt))))))))
+;;===========================================================
+

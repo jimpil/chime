@@ -32,9 +32,12 @@
         (doto (Thread. r)
           (.setName (format "chime-%d" (swap! !count inc))))))))
 
-(defn- default-error-handler [e]
-  (log/warn e "Error running scheduled fn")
-  true)
+(defn default-error-handler
+  ([e]
+   (default-error-handler nil e))
+  ([_ e]
+   (log/warn e "Error running scheduled fn")
+   true))
 
 (defn chime-at
   "Calls `f` with the current time at every time in the `times` sequence.
@@ -174,10 +177,20 @@
    (or (shutdown! sched)
        (cancel-next! sched interrupt?))))
 
-(defn wait-for!
+(defn wait-for
   "Blocking call for waiting until the schedule finishes,
    or the provided <timeout-ms> has elapsed."
   ([sched]
    (deref sched))
   ([sched timeout-ms timeout-val]
    (deref sched timeout-ms timeout-val)))
+
+(defn next-at
+  "Returns the (future) `Instant` when the next chime will occur,
+   or nil if it has already started."
+  (^Instant [sched]
+   (next-at sched utc-clock))
+  (^Instant [sched clock]
+   (let [remaining (until-next sched)]
+     (when (pos? remaining)
+       (.plusMillis (now clock) remaining)))))
