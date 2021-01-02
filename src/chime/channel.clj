@@ -1,7 +1,8 @@
 (ns chime.channel
   (:require [clojure.core.async :as ca]
             [clojure.core.async.impl.protocols :as cap]
-            [chime.schedule :refer [chime-at]]))
+            [chime.schedule :refer [chime-at]])
+  (:import (java.lang AutoCloseable)))
 
 (defn chime-ch
   "Returns a core.async channel that 'chimes' at every time in the times list.
@@ -49,7 +50,7 @@
 
             cap/Channel
             (close! [_]
-              (.close sched)
+              (.close ^AutoCloseable sched)
               (ca/close! ch))
             (closed? [_]
               (cap/closed? ch)))
