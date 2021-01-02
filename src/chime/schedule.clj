@@ -117,11 +117,15 @@
          ScheduledFuture
          (cancel [_ interrupt?] ;; expose interrupt facilities (opt-in)
            (when-let [^ScheduledFuture fut @current]
-             (and (not (.isCancelled fut))
-                  (.cancel fut interrupt?))))
+             (or (.isCancelled fut)
+                 (.cancel fut interrupt?))))
          (getDelay [_ time-unit] ;; expose remaining time until next chime
            (when-let [^ScheduledFuture fut @current]
-             (.getDelay fut time-unit))))))))
+             (.getDelay fut time-unit)))
+         (isCancelled [_]
+           (when-let [^ScheduledFuture fut @current]
+             (.isCancelled fut)))
+         )))))
 
 ;; HIGH-LEVEL API REFLECTING THE SEMANTICS OF THE CONSTRUCT ABOVE
 ;; ==============================================================
@@ -131,7 +135,8 @@
    as it may have already started. The rest of the schedule
    will remain unaffected, unless the interruption is handled
    by the error-handler (i.e. `InterruptedException`), and it
-   returns falsey, or throws (the default one returns true)."
+   returns falsey, or throws (the default one returns true).
+   Returns true if already cancelled."
   ([sched]
    (cancel-next! sched true)) ;; essentially the same as `future-cancel`
   ([^ScheduledFuture sched interrupt?]
