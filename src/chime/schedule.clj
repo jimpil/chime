@@ -71,11 +71,13 @@
    (let [pool (Executors/newSingleThreadScheduledExecutor thread-factory)
          !latch (promise)
          current (atom nil)
-         f (bound-fn* f)]
+         f      (bound-fn* f)
+         error! (bound-fn* error-handler)
+         done!  (some-> on-finished bound-fn*)]
      (letfn [(close []
                (.shutdown pool)
-               (when (and (deliver !latch nil) on-finished)
-                 (on-finished)))
+               (when (and (deliver !latch nil) done!)
+                 (done!)))
 
              (schedule-loop [[time & times]]
                (letfn [(task []
@@ -85,7 +87,7 @@
                                  true)
                                (catch Exception e
                                  (try
-                                   (error-handler e)
+                                   (error! e)
                                    (catch Exception e
                                      (log/error e "error calling chime error-handler, stopping schedule")))))
 
