@@ -1,11 +1,11 @@
-(ns chime.core
+(ns chime.schedule
   "Lightweight scheduling library."
-  (:require [clojure.tools.logging :as log])
+  (:require [clojure.tools.logging :as log]
+            [chime.times :refer [to-instant]])
   (:import (clojure.lang IDeref IBlockingDeref IPending)
-           (java.time ZonedDateTime Instant Clock)
-           (java.time.temporal ChronoUnit TemporalAmount)
-           (java.util Date)
-           (java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit)
+           (java.time Instant Clock)
+           (java.time.temporal ChronoUnit)
+           (java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit ScheduledFuture)
            (java.lang AutoCloseable Thread$UncaughtExceptionHandler)))
 
 ;; --------------------------------------------------------------------- time helpers
@@ -24,29 +24,6 @@
   (^Instant [^Clock clock]
    (Instant/now clock)))
 
-(defprotocol ->Instant
-  (->instant [obj]
-    "Convert `obj` to an Instant instance."))
-
-(extend-protocol ->Instant
-  Date
-  (->instant [^Date date]
-    (.toInstant date))
-
-  Instant
-  (->instant [inst] inst)
-
-  Long
-  (->instant [epoch-msecs]
-    (Instant/ofEpochMilli epoch-msecs))
-
-  ZonedDateTime
-  (->instant [zdt]
-    (.toInstant zdt)))
-
-(defn to-instant
-  ^Instant [obj]
-  (->instant obj))
 
 (def ^:private default-thread-factory
   (let [!count (atom 0)]
@@ -57,7 +34,7 @@
 
 (defn- default-error-handler [e]
   (log/warn e "Error running scheduled fn")
-  (not (instance? InterruptedException e)))
+  true)
 
 (defn chime-at
   "Calls `f` with the current time at every time in the `times` sequence.
@@ -92,17 +69,20 @@
                                  thread-factory default-thread-factory ;; loom-friendly (i.e. virtual threads)
                                  clock          utc-clock}}]
    (let [pool (Executors/newSingleThreadScheduledExecutor thread-factory)
-         !latch (promise)]
+         !latch (promise)
+         current (atom nil)
+         f (bound-fn* f)]
      (letfn [(close []
-               (.shutdownNow pool)
+               (.shutdown pool)
                (when (and (deliver !latch nil) on-finished)
                  (on-finished)))
 
              (schedule-loop [[time & times]]
                (letfn [(task []
                          (if (try
-                               (f time)
-                               true
+                               (when-not (realized? !latch)
+                                 (f time)
+                                 true)
                                (catch Exception e
                                  (try
                                    (error-handler e)
@@ -113,7 +93,8 @@
                            (close)))]
 
                  (if time
-                   (.schedule pool ^Runnable task (.between ChronoUnit/MILLIS (now clock) time) TimeUnit/MILLISECONDS)
+                   (->> (.schedule pool ^Runnable task (.between ChronoUnit/MILLIS (now clock) time) TimeUnit/MILLISECONDS)
+                        (reset! current))
                    (close))))]
 
        (schedule-loop (map to-instant times))
@@ -129,15 +110,67 @@
          (deref [_ ms timeout-val] (deref !latch ms timeout-val))
 
          IPending
-         (isRealized [_] (realized? !latch)))))))
+         (isRealized [_] (realized? !latch))
 
-(defn periodic-seq [^Instant start ^TemporalAmount duration-or-period]
-  (iterate #(.addTo duration-or-period ^Instant %) start))
+         ScheduledFuture
+         (cancel [_ interrupt?] ;; expose interrupt facilities (opt-in)
+           (when-let [^ScheduledFuture fut @current]
+             (and (not (.isCancelled fut))
+                  (.cancel fut interrupt?))))
+         (getDelay [_ time-unit] ;; expose remaining time until next chime
+           (when-let [^ScheduledFuture fut @current]
+             (.getDelay fut time-unit))))))))
 
-(defn without-past-times
-  ([times] (without-past-times times (now)))
+;; HIGH-LEVEL API REFLECTING THE SEMANTICS OF THE CONSTRUCT ABOVE
+;; ==============================================================
 
-  ([times now]
-   (let [now-inst (to-instant now)]
-     (->> times
-        (drop-while #(.isBefore (to-instant %) now-inst))))))
+(defn cancel-next!
+  "Cancels the next upcoming chime, potentially abruptly,
+   as it may have already started. The rest of the schedule
+   will remain unaffected, unless the interruption is handled
+   by the error-handler (i.e. `InterruptedException`), and it
+   returns falsey, or throws (the default one returns true)."
+  ([sched]
+   (cancel-next! sched true)) ;; essentially the same as `future-cancel`
+  ([^ScheduledFuture sched interrupt?]
+   (.cancel sched interrupt?)))
+
+(defn until-next
+  "Returns the remaining time (in millis by default)
+   until the next chime (via `ScheduledFuture.getDelay()`)."
+  ([sched]
+   (until-next sched TimeUnit/MILLISECONDS))
+  ([^ScheduledFuture sched time-unit]
+   (.getDelay sched time-unit)))
+
+(defn cancel-next?!
+  "Like `cancel-next!`, but only if the next task hasn't already started."
+  [^ScheduledFuture sched]
+  (when (pos? (until-next sched))
+    (cancel-next! sched)))
+
+(defn shutdown!
+  "Gracefully closes the entire schedule (per `pool.shutdown()`).
+   If the next task hasn't started yet, it will be cancelled,
+   otherwise it will be allowed to finish."
+  [^AutoCloseable sched]
+  (-> (doto sched (.close))
+      cancel-next?!))
+
+(defn shutdown-now!
+  "Attempts a graceful shutdown (per `shutdown!`), but if the latest task
+   is already happening attempts to interrupt it. Semantically equivalent
+   to `pool.shutdownNow()` when called with <interrupt?> = true (the default)."
+  ([sched]
+   (shutdown-now! sched true))
+  ([sched interrupt?]
+   (or (shutdown! sched)
+       (cancel-next! sched interrupt?))))
+
+(defn wait-for!
+  "Blocking call for waiting until the schedule finishes,
+   or the provided <timeout-ms> has elapsed."
+  ([sched]
+   (deref sched))
+  ([sched timeout-ms timeout-val]
+   (deref sched timeout-ms timeout-val)))
