@@ -30,11 +30,11 @@
 
 (defn- schedule1
   [scheduler id times-fn callback]
-  (as-> id $id-params
-        (partial forget-on-finish! scheduler $id-params)
-        (update (meta scheduler) :on-finished $id-params)
-        (update $id-params :error-handler (fn [eh] (fn [e] (eh id e))))
-        (c/chime-at (times-fn) callback $id-params)))
+  (as-> id $OPTS
+        (partial forget-on-finish! scheduler $OPTS)
+        (update (meta scheduler) :on-finished $OPTS)
+        (update $OPTS :error-handler (fn [eh] (fn [e] (eh id e))))
+        (c/chime-at (times-fn) callback $OPTS)))
 
 (defn- schedule*
   [scheduler id->job]
@@ -114,7 +114,7 @@
 
 (comment
   (require '[chime.times :as times])
-  (def SCHEDULER (chiming-agent {:on-finished #(println "Job" %s "finished...")}))
+  (def SCHEDULER (chiming-agent {:on-finished #(println "Job" % "finished...")}))
   (schedule! SCHEDULER
              {:foo [(partial println "Hi")
                     times/every-n-seconds]
