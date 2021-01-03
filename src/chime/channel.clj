@@ -26,10 +26,9 @@
                             (.plusSeconds now 4)]
                             {:drop-overruns? true})]
       (go-loop [] ;; fast consumer
-        (if-let [msg (<! chimes)]
-          (do (prn \"Chiming at:\" msg)
-              (recur))
-          (close! chimes))))
+        (when-let [msg (<! chimes)]
+          (prn \"Chiming at:\" msg)
+            (recur))))
 
   There are extensive usage examples in the README"
   ([times]
@@ -76,10 +75,9 @@
                          {:drop-overruns? true})]
     ;; fast consumer
     (ca/go-loop []
-      (if-let [msg (ca/<! chimes)]
-        (do (prn "Chiming at:" msg)
-            (recur)))
-      (ca/close! chimes)))
+      (when-let [msg (ca/<! chimes)]
+        (prn "Chiming at:" msg)
+        (recur))))
 ;; "Chiming at:" #object[java.time.Instant 0x431983da "2021-01-03T13:02:54.854149Z"]
 ;; "Chiming at:" #object[java.time.Instant 0x6f779b32 "2021-01-03T13:02:56.854149Z"]
 
@@ -93,7 +91,6 @@
     (prn (ca/<!! chimes))
     (Thread/sleep 2000)
     (prn (ca/<!! chimes))
-    (ca/close! chimes)
     )
 ;; #object[java.time.Instant 0x47cda656 "2021-01-03T13:03:34.113710Z"]
 ;; #object[java.time.Instant 0x4d53d6e "2021-01-03T13:03:36.113710Z"]
