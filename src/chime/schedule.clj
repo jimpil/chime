@@ -106,6 +106,7 @@
                        (recur times)))
                    (close))))]
 
+       ;; kick-off the schedule loop
        (schedule-loop (map to-instant times))
 
        (reify
