@@ -1,4 +1,4 @@
-(defproject jimpil/chime "1.0.0"
+(defproject jimpil/chime "1.0.0-SNAPSHOT"
   :description "Flexible scheduling primitives for Clojure"
 
   :url "https://github.com/jimpil/chime"
@@ -10,14 +10,14 @@
                  [org.clojure/tools.logging "1.0.0"]
                  [org.clojure/core.async "1.1.587" :scope "provided"]]
 
-  ;; lein release :patch
   :release-tasks [["vcs" "assert-committed"]
                   ["change" "version" "leiningen.release/bump-version" "release"]
                   ["vcs" "commit"]
                   ["vcs" "tag" "--no-sign"]
-                  ["deploy"]
+                  ["deploy" ]
                   ["change" "version" "leiningen.release/bump-version"]
                   ["vcs" "commit"]
-                  ["vcs" "push"]
-                  ]
+                  ["vcs" "push"]]
+  :deploy-repositories [["releases" :clojars]] ;; lein release :patch
+  :signing {:gpg-key "jimpil1985@gmail.com"}
   )
