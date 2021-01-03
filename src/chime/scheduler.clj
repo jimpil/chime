@@ -1,6 +1,7 @@
 (ns chime.scheduler
   "A higher-level scheduler construct built on top of `chime.schedule/chime-at` & `clojure.core/agent`."
-  (:require [chime.schedule :as c]))
+  (:require [chime.schedule :as c]
+            [chime.times :as times]))
 
 (defn chiming-agent
   "Returns an `agent` dressed up as a scheduler.
@@ -68,22 +69,30 @@
   ([scheduler dlay-millis ids]
    (let [f (fn [_] (send-off scheduler unschedule* ids))]
      (if (and dlay-millis (pos-int? dlay-millis))
-       (c/chime-at [(.plusMillis (c/now) dlay-millis)] f)
+       (c/chime-at [(.plusMillis (times/now) dlay-millis)] f)
        (f nil))
      nil)))
 
-(defn active-jobs
+(defn active-chimes
   "Returns the ids of all the ongoing jobs of this <scheduler>,
    or nil if there aren't any."
   [scheduler]
   (keys @scheduler))
 
-(defn upcoming-jobs-at
+(defn next-chime-at
+  "Returns the next `ZonedDateTime` object
+   when the job with <id> will chime."
+  [scheduler id]
+  (c/next-chime-at (get @scheduler id)))
+
+(defn next-chimes-at
+  "Returns a map from job-id => ZonedDateTime."
   [scheduler]
-  (into {}
-        (map (fn [[id sched]]
-               [id (c/next-at sched)]))
-        @scheduler))
+  (let [jobs @scheduler
+        job-ids (keys jobs)]
+    (->> job-ids
+         (map #(c/next-chime-at (get jobs %)))
+         (zipmap job-ids))))
 
 (comment
   (require '[chime.times :as times])
@@ -95,6 +104,7 @@
               :bar [(partial println "there")
                     #(take 5 (times/every-n-millis 1500))]})
 
+  (next-chimes-at SCHEDULER)
   (unschedule! SCHEDULER nil [:foo])
-  (active-jobs SCHEDULER) ;; => nil
+  (active-chimes SCHEDULER) ;; => nil
   )

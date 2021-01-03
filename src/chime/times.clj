@@ -1,10 +1,28 @@
 (ns chime.times
   (:require [clojure.string :as str])
   (:import (java.util Date Locale)
-           (java.time Instant ZonedDateTime OffsetDateTime Duration Period LocalTime ZoneId DayOfWeek LocalDateTime YearMonth LocalDate Month)
+           (java.time Instant ZonedDateTime OffsetDateTime Duration Period LocalTime ZoneId DayOfWeek LocalDateTime YearMonth LocalDate Month Clock)
            (java.time.temporal TemporalAmount)
            (java.sql Timestamp)
            (java.time.format TextStyle)))
+
+(defonce ^Clock utc-clock (Clock/systemUTC))
+(def ^:dynamic *clock*
+  "The clock used to determine 'now' (defaults to `Clock/systemUTC`). 
+   See `with-clock` for re-binding it."
+  utc-clock)
+
+(defmacro with-clock
+  [clock & body]
+  `(binding [*clock* ~clock]
+     ~@body))
+
+(defn now
+  "Wrapper around `Instant/now`. No-arg arity uses *clock*."
+  (^Instant []
+   (now *clock*))
+  (^Instant [^Clock clock]
+   (Instant/now clock)))
 
 (defprotocol ->Instant
   (->instant [obj]
@@ -43,7 +61,7 @@
   "Given a (potentially infinite) list of successive <times>,
    drops the ones that are in the past (via `drop-while`)."
   ([times]
-   (without-past-times times (Instant/now)))
+   (without-past-times times (now)))
   ([times now]
    (let [now-inst (to-instant now)]
      (->> times
@@ -77,7 +95,7 @@
   ([]
    (every-n-millis 100))
   ([n]
-   (-> (Instant/now)
+   (-> (now)
        (every-n-millis n)
        next))
   ([from n]
@@ -89,7 +107,7 @@
   ([]
    (every-n-seconds 1))
   ([n]
-   (-> (Instant/now)
+   (-> (now)
        (every-n-seconds n)
        next))
   ([from n]
@@ -101,7 +119,7 @@
   ([]
    (every-n-minutes 1))
   ([n]
-   (-> (Instant/now)
+   (-> (now)
        (every-n-minutes n)
        rest))
   ([from n]
@@ -113,7 +131,7 @@
   ([]
    (every-n-hours 1))
   ([n]
-   (-> (Instant/now)
+   (-> (now)
        (every-n-hours n)
        next))
   ([from n]
@@ -125,7 +143,7 @@
   ([]
    (every-n-days 1))
   ([n]
-   (-> (Instant/now)
+   (-> (now)
        (every-n-days n)
        next))
   ([from n]
@@ -148,7 +166,7 @@
    (every-day-at (LocalTime/of 0 0)))
   ([^LocalTime lt]
    (-> lt
-       (.adjustInto (ZonedDateTime/now (ZoneId/systemDefault)))
+       (.adjustInto (ZonedDateTime/now ^Clock *clock*))
        (every-n-days 1))))
 
 (defn some-days-at
@@ -176,7 +194,7 @@
 
 (defn every-days-of-month-at
   [days ^LocalTime lt]
-  (->> (some-days-at days lt)                            ;; all relevant days
+  (->> (some-days-at days lt)                         ;; all relevant days
        (partition-by #(.getMonth ^ZonedDateTime %)))) ;; partitioned into months
 
 (defn every-first-day-of-month-at
@@ -243,7 +261,7 @@
    (-> (LocalDateTime/of
           (.withDayOfMonth (LocalDate/now) month-day)
           lt)
-        (.adjustInto (ZonedDateTime/now (ZoneId/systemDefault)))
+        (.adjustInto (ZonedDateTime/now ^Clock *clock*))
        (periodic-seq (Period/ofMonths 1))
        next)))
 

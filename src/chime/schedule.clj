@@ -1,29 +1,12 @@
 (ns chime.schedule
   "Lightweight scheduling library."
   (:require [clojure.tools.logging :as log]
-            [chime.times :refer [to-instant]])
+            [chime.times :as times])
   (:import (clojure.lang IDeref IBlockingDeref IPending)
-           (java.time Instant Clock)
+           (java.time Instant Clock ZonedDateTime)
            (java.time.temporal ChronoUnit)
            (java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit ScheduledFuture)
            (java.lang AutoCloseable Thread$UncaughtExceptionHandler)))
-
-;; --------------------------------------------------------------------- time helpers
-(defonce utc-clock (Clock/systemUTC))
-
-(def ^:dynamic *clock*
-  "The clock used to determine 'now'; you can override it with `binding` for
-  testing purposes."
-  utc-clock)
-
-(defn now
-  "Returns a date time for the current instant.
-   No-arg arity uses *clock*."
-  (^Instant []
-   (now *clock*))
-  (^Instant [^Clock clock]
-   (Instant/now clock)))
-
 
 (def ^:private default-thread-factory
   (let [!count (atom 0)]
@@ -70,7 +53,7 @@
   (^AutoCloseable [times f {:keys [error-handler on-finished thread-factory clock drop-overruns?]
                             :or {error-handler  default-error-handler
                                  thread-factory default-thread-factory ;; loom-friendly (i.e. virtual threads)
-                                 clock          utc-clock}}]
+                                 clock          times/*clock*}}]
    (let [pool (Executors/newSingleThreadScheduledExecutor thread-factory)
          !latch (promise)
          current (atom nil)
@@ -98,7 +81,7 @@
                            (close)))]
 
                  (if time
-                   (let [dlay (.between ChronoUnit/MILLIS (now clock) time)]
+                   (let [dlay (.between ChronoUnit/MILLIS (times/now clock) time)]
                      (if (or (pos? dlay)
                              (not drop-overruns?))
                        (->> (.schedule pool ^Runnable task dlay TimeUnit/MILLISECONDS)
@@ -107,7 +90,7 @@
                    (close))))]
 
        ;; kick-off the schedule loop
-       (schedule-loop (map to-instant times))
+       (schedule-loop (map times/to-instant times))
 
        (reify
          AutoCloseable
@@ -149,11 +132,11 @@
   ([^ScheduledFuture sched interrupt?]
    (.cancel sched interrupt?)))
 
-(defn until-next
+(defn until-next-chime
   "Returns the remaining time (in millis by default)
    until the next chime (via `ScheduledFuture.getDelay()`)."
   ([sched]
-   (until-next sched TimeUnit/MILLISECONDS))
+   (until-next-chime sched TimeUnit/MILLISECONDS))
   ([^ScheduledFuture sched time-unit]
    (.getDelay sched time-unit)))
 
@@ -161,7 +144,7 @@
   "Like `cancel-next!`, but only if the next task
    hasn't already started (millisecond tolerance)."
   [^ScheduledFuture sched]
-  (when (pos? (until-next sched))
+  (when (pos? (until-next-chime sched))
     (cancel-next! sched)))
 
 (defn shutdown!
@@ -190,12 +173,13 @@
   ([sched timeout-ms timeout-val]
    (deref sched timeout-ms timeout-val)))
 
-(defn next-at
-  "Returns the (future) `Instant` when the next chime will occur,
+(defn next-chime-at
+  "Returns the (future) `ZonedDateTime` when the next chime will occur,
    or nil if it has already started (millisecond tolerance)."
-  (^Instant [sched]
-   (next-at sched utc-clock))
-  (^Instant [sched clock]
-   (let [remaining (until-next sched)]
+  (^ZonedDateTime [sched]
+   (next-chime-at sched times/*clock*))
+  (^ZonedDateTime [sched ^Clock clock]
+   (let [remaining (until-next-chime sched)]
      (when (pos? remaining)
-       (.plusMillis (now clock) remaining)))))
+       (-> (ZonedDateTime/now clock)
+           (.plus remaining ChronoUnit/MILLIS))))))
