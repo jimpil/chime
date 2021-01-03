@@ -14,12 +14,13 @@
    as the first argument to all functions in this namespace."
   ([]
    (chiming-agent nil))
-  ([{:keys [error-handler on-finished]}]
+  ([{:keys [error-handler on-finished]
+     :or {error-handler c/default-error-handler}}]
    (agent {}
           :error-handler (fn [_ e] (log/warn e "`chiming-agent` error! Carrying-on with the schedule(s) ..."))
           ;; will become the options to `chime-at`
-          :meta (cond-> {:on-finished on-finished}
-                        error-handler (assoc :error-handler error-handler)))))
+          :meta {:on-finished on-finished
+                 :error-handler error-handler})))
 
 (defn- forget-on-finish!
   [scheduler id finish!]
@@ -32,7 +33,7 @@
   (as-> id $id-params
         (partial forget-on-finish! scheduler $id-params)
         (update (meta scheduler) :on-finished $id-params)
-        (update $id-params  :error-handler (fn [eh] (fn [e] (eh id e))))
+        (update $id-params :error-handler (fn [eh] (fn [e] (eh id e))))
         (c/chime-at (times-fn) callback $id-params)))
 
 (defn- schedule*
