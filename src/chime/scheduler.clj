@@ -1,35 +1,39 @@
 (ns chime.scheduler
-  "A higher-level scheduler construct built on top of `chime.schedule/chime-at` & `clojure.core/agent`."
+  "A higher-level scheduler construct built on top of `chime.schedule/chime-at` & `clojure.core/agent`.
+   Remembers actively scheduled jobs, until they finish, or are manually cancelled."
   (:require [chime.schedule :as c]
-            [chime.times :as times]))
+            [chime.times :as times]
+            [clojure.tools.logging :as log]))
 
 (defn chiming-agent
   "Returns an `agent` dressed up as a scheduler.
-   Can be configured with an :error-handler (1/2 args),
-   and :on-finished (no-args). The state of the agent is
+   Can be configured with an :error-handler (2args - job-id/error), and
+   :on-finished (1arg - job-id) callback. The state of the agent is
    a map from job-id => chime-return, and it will grow/shrink
    as jobs are scheduled/un-scheduled (or finished). Use it
-   as the first argument to `schedule!`/`unschedule!`."
+   as the first argument to all functions in this namespace."
   ([]
    (chiming-agent nil))
-  ([{:keys [error-handler on-finished]
-     :or {error-handler c/default-error-handler}}]
+  ([{:keys [error-handler on-finished]}]
    (agent {}
-          :error-handler error-handler ;; reuse the error-handler - MUST support 1/2 args!
-          :meta {:error-handler error-handler
-                 :on-finished on-finished})))
+          :error-handler (fn [_ e] (log/warn e "`chiming-agent` error! Carrying-on with the schedule(s) ..."))
+          ;; will become the options to `chime-at`
+          :meta (cond-> {:on-finished on-finished}
+                        error-handler (assoc :error-handler error-handler)))))
 
 (defn- forget-on-finish!
   [scheduler id finish!]
   (fn []
     (send-off scheduler dissoc id)
-    (when finish! (finish!))))
+    (when finish! (finish! id))))
 
 (defn- schedule1
   [scheduler id times-fn callback]
-  (->> (partial forget-on-finish! scheduler id)
-       (update (meta scheduler) :on-finished)
-       (c/chime-at (times-fn) callback)))
+  (as-> id $id-params
+        (partial forget-on-finish! scheduler $id-params)
+        (update (meta scheduler) :on-finished $id-params)
+        (update $id-params  :error-handler (fn [eh] (fn [e] (eh id e))))
+        (c/chime-at (times-fn) callback $id-params)))
 
 (defn- schedule*
   [scheduler id->job]
@@ -62,7 +66,7 @@
   (reduce (partial unschedule1 shutdown-fn) jobs ids))
 
 (defn unschedule!
-  "Given a <scheduler>, gracefully un-schedules (per `shutdown!`)
+  "Given a <scheduler>, gracefully un-schedules (per `chime.schedule/shutdown!`)
    the jobs referred to by <ids>. Triggers the `:on-finished` handler
    (see `scheduler` ctor)."
   ([scheduler ids]
@@ -75,7 +79,7 @@
      nil)))
 
 (defn unschedule-now!
-  "Like `unschedule!`, but uses `shutdown-now!`."
+  "Like `unschedule!`, but uses `chime.schedule/shutdown-now!`."
   ([scheduler ids]
    (unschedule-now! scheduler nil ids))
   ([scheduler dlay-millis ids]
@@ -109,7 +113,7 @@
 
 (comment
   (require '[chime.times :as times])
-  (def SCHEDULER (chiming-agent))
+  (def SCHEDULER (chiming-agent {:on-finished #(println "Job" %s "finished...")}))
   (schedule! SCHEDULER
              {:foo [(partial println "Hi")
                     times/every-n-seconds]

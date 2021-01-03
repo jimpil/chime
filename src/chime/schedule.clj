@@ -6,47 +6,49 @@
            (java.time Instant Clock ZonedDateTime)
            (java.time.temporal ChronoUnit)
            (java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit ScheduledFuture)
-           (java.lang AutoCloseable Thread$UncaughtExceptionHandler)))
+           (java.lang AutoCloseable)
+           (java.util.concurrent.atomic AtomicLong)))
 
 (def ^:private default-thread-factory
-  (let [!count (atom 0)]
+  (let [thread-no (AtomicLong. 0)]
     (reify ThreadFactory
       (newThread [_ r]
         (doto (Thread. r)
-          (.setName (format "chime-%d" (swap! !count inc))))))))
+          (.setName (format "chime-%d" (.incrementAndGet thread-no))))))))
 
-(defn default-error-handler
-  ([e]
-   (default-error-handler nil e))
-  ([_ e]
-   (log/warn e "Error running scheduled fn")
-   true))
+(defn default-error-handler [e]
+  (log/warn e "Error running scheduled fn")
+  true)
 
 (defn chime-at
-  "Calls `f` with the current time at every time in the `times` sequence.
+  "Calls <f> with the current time, at every time in the <times> sequence.
 
   ```
-  (:require [chime.core :as chime])
+  (:require [chime.schedule :as chime])
   (:import [java.time Instant])
 
   (let [now (Instant/now)]
-    (chime/chime-at [(.plusSeconds now 2)
-                     (.plusSeconds now 4)]
-                    (fn [time]
-                      (println \"Chiming at\" time)))
+    (chime/chime-at
+      [(.plusSeconds now 2)
+       (.plusSeconds now 4)]
+      (fn [time]
+        (println \"Chiming at\" time)))
   ```
 
-  Returns an AutoCloseable that you can `.close` to stop the schedule.
+  If one of those times is in the past (e.g. by accident), or a job spills over to
+  the next time (i.e. overunning), it will (by default) be scheduled with no delay
+  (i.e. 'push-forward' semantics). If you don't want that to happen, use the <drop-overruns?>
+  option (i.e. 'catch-up' semantics).
+
+  Providing a custom <thread-factory> is supported, but optional (see `default-thread-factory`).
+  Providing a custom <clock> is supported, but optional (see `times/*clock*`).
+  Providing a custom (1-arg) `error-handler` is supported, but optional (see `default-error-handler`).
+  Return truthy from this function to continue the schedule (the default), or falsy to shut it down.
+
+  Returns an AutoCloseable that you can `.close` in order to shutdown the schedule.
   You can also deref the return value to wait for the schedule to finish.
 
-  Providing a custom `thread-factory` is supported, but optional (see `chime.core/default-thread-factory`).
-  Providing a custom `clock` is supported, but optional (see `chime.core/utc-clock`).
-
-  When the schedule is either cancelled or finished, will call the `on-finished` handler.
-
-  You can pass an error-handler to `chime-at` - a function that takes the exception as an argument.
-  Return truthy from this function to continue the schedule, falsy to cancel it.
-  By default, Chime will log the error and continue the schedule (see `chime.core/default-error-handler`)."
+  When the schedule is either manually cancelled or exhausted, the <on-finished> callback will be called."
 
   (^AutoCloseable [times f] (chime-at times f nil))
 
@@ -65,11 +67,11 @@
                (when (and (deliver !latch nil) done!)
                  (done!)))
 
-             (schedule-loop [[time & times]]
+             (schedule-loop [[curr-time & times]]
                (letfn [(task []
                          (if (try
                                (when-not (realized? !latch)
-                                 (f time)
+                                 (f curr-time)
                                  true)
                                (catch Exception e
                                  (try
@@ -80,8 +82,8 @@
                            (schedule-loop times)
                            (close)))]
 
-                 (if time
-                   (let [dlay (.between ChronoUnit/MILLIS (times/now clock) time)]
+                 (if curr-time
+                   (let [dlay (.between ChronoUnit/MILLIS (times/now clock) curr-time)]
                      (if (or (pos? dlay)
                              (not drop-overruns?))
                        (->> (.schedule pool ^Runnable task dlay TimeUnit/MILLISECONDS)
@@ -92,20 +94,20 @@
        ;; kick-off the schedule loop
        (schedule-loop (map times/to-instant times))
 
-       (reify
-         AutoCloseable
+       (reify ;; the returned object represents 2 things
+         AutoCloseable ;; whole-schedule
          (close [_] (close))
 
-         IDeref
+         IDeref ;; whole-schedule
          (deref [_] (deref !latch))
 
-         IBlockingDeref
+         IBlockingDeref ;; whole-schedule
          (deref [_ ms timeout-val] (deref !latch ms timeout-val))
 
-         IPending
+         IPending ;; whole-schedule
          (isRealized [_] (realized? !latch))
 
-         ScheduledFuture
+         ScheduledFuture ;; next-job
          (cancel [_ interrupt?] ;; expose interrupt facilities (opt-in)
            (when-let [^ScheduledFuture fut @current]
              (or (.isCancelled fut)

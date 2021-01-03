@@ -5,14 +5,14 @@
   (:import (java.lang AutoCloseable)))
 
 (defn chime-ch
-  "Returns a core.async channel that 'chimes' at every time in the times list.
+  "Returns a read-only (core.async) channel that 'chimes' at every time in the <times> list.
 
   Arguments:
-    times - (required) Sequence of java.util.Dates, java.time.Instant,
-                       java.time.ZonedDateTime, java.time.OffsetDateTime, or msecs since epoch
+    times - (required) Sequence of java.util.Dates, java.time.Instant, java.time.ZonedDateTime, java.time.OffsetDateTime,
+                       or msecs since epoch. Consumers of the returned channel will receive these as `Instant` objects.
 
     buffer - (optional but STRONGLY advised) Buffering semantics for the underlying write-channel.
-             Allows for finer control (than `:drop-overruns?`) over what happens with over-runnning jobs (i.e. dropped/slided)
+             Allows for finer control (than `:drop-overruns?`) wrt what happens with over-runnning jobs (i.e. dropped/slided)
     error-handler - (optional) See `chime-at`
     on-finished - (optional) See `chime-at`
     clock - (optional) See `chime-at`
@@ -73,7 +73,8 @@
                           (.plusSeconds now 2)
                           (.plusSeconds now 4)]
                          {:drop-overruns? true})]
-    ;; fast consumer
+    ;; fast consumer who wants to ALWAYS be up-to-date
+    ;; with the schedule (regardless of how many are dropped)
     (ca/go-loop []
       (when-let [msg (ca/<! chimes)]
         (prn "Chiming at:" msg)
@@ -86,7 +87,7 @@
                           (.plusSeconds now 2)
                           (.plusSeconds now 4)]
                          {:buffer (ca/sliding-buffer 1)})]
-    ;; slow consumer
+    ;; slow consumer who doesn't always need to feel 'up-to-date'
     (Thread/sleep 2000)
     (prn (ca/<!! chimes))
     (Thread/sleep 2000)
