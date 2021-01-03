@@ -51,27 +51,40 @@
       (merge jobs (schedule* scheduler id->job)))))
 
 (defn- unschedule1
-  [jobs id]
+  [shutdown-fn jobs id]
   (if-let [scheduled (get jobs id)]
-    (do (c/shutdown! scheduled)
+    (do (shutdown-fn scheduled)
         (dissoc jobs id))
     jobs))
 
 (defn- unschedule*
-  [jobs ids]
-  (reduce unschedule1 jobs ids))
+  [shutdown-fn jobs ids]
+  (reduce (partial unschedule1 shutdown-fn) jobs ids))
 
 (defn unschedule!
-  "Given a <scheduler>, un-schedules the jobs referred to by <ids>.
-   Triggers the `:on-finished` handler (see `scheduler` ctor)."
+  "Given a <scheduler>, gracefully un-schedules (per `shutdown!`)
+   the jobs referred to by <ids>. Triggers the `:on-finished` handler
+   (see `scheduler` ctor)."
   ([scheduler ids]
    (unschedule! scheduler nil ids))
   ([scheduler dlay-millis ids]
-   (let [f (fn [_] (send-off scheduler unschedule* ids))]
+   (let [f (fn [_] (send-off scheduler (partial unschedule* c/shutdown!) ids))]
      (if (and dlay-millis (pos-int? dlay-millis))
        (c/chime-at [(.plusMillis (times/now) dlay-millis)] f)
        (f nil))
      nil)))
+
+(defn unschedule-now!
+  "Like `unschedule!`, but uses `shutdown-now!`."
+  ([scheduler ids]
+   (unschedule-now! scheduler nil ids))
+  ([scheduler dlay-millis ids]
+   (let [f (fn [_] (send-off scheduler (partial unschedule* c/shutdown-now!) ids))]
+     (if (and dlay-millis (pos-int? dlay-millis))
+       (c/chime-at [(.plusMillis (times/now) dlay-millis)] f)
+       (f nil))
+     nil)))
+
 
 (defn active-chimes
   "Returns the ids of all the ongoing jobs of this <scheduler>,
