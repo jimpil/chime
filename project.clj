@@ -17,7 +17,8 @@
                   ["deploy" ]
                   ["change" "version" "leiningen.release/bump-version"]
                   ["vcs" "commit"]
-                  ["vcs" "push"]]
+                  ;["vcs" "push"]
+                  ]
   :deploy-repositories [["releases" :clojars]] ;; lein release :patch
   :signing {:gpg-key "jimpil1985@gmail.com"}
   )
