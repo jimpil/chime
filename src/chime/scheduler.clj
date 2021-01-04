@@ -91,25 +91,25 @@
      nil)))
 
 
-(defn active-chimes
+(defn scheduled-ids
   "Returns the ids of all the ongoing jobs of this <scheduler>,
    or nil if there aren't any."
   [scheduler]
   (keys @scheduler))
 
-(defn next-chime-at
+(defn upcoming-chime-at
   "Returns the next `ZonedDateTime` object
    when the job with <id> will chime."
   [scheduler id]
-  (c/next-chime-at (get @scheduler id)))
+  (c/current-at (get @scheduler id)))
 
-(defn next-chimes-at
+(defn upcoming-chimes-at
   "Returns a map from job-id => ZonedDateTime."
   [scheduler]
   (let [jobs @scheduler
         job-ids (keys jobs)]
     (->> job-ids
-         (map #(c/next-chime-at (get jobs %)))
+         (map #(c/current-at (get jobs %)))
          (zipmap job-ids))))
 
 (comment
@@ -122,7 +122,7 @@
               :bar [(partial println "there")
                     #(take 5 (times/every-n-millis 1500))]})
 
-  (next-chimes-at SCHEDULER)
+  (upcoming-chimes-at SCHEDULER)
   (unschedule! SCHEDULER nil [:foo])
-  (active-chimes SCHEDULER) ;; => nil
+  (scheduled-ids SCHEDULER) ;; => nil
   )

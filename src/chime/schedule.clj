@@ -2,7 +2,7 @@
   "Lightweight scheduling library."
   (:require [clojure.tools.logging :as log]
             [chime.times :as times])
-  (:import (clojure.lang IDeref IBlockingDeref IPending)
+  (:import (clojure.lang IDeref IBlockingDeref IPending ISeq)
            (java.time Instant Clock ZonedDateTime)
            (java.time.temporal ChronoUnit)
            (java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit ScheduledFuture)
@@ -58,10 +58,12 @@
                                  clock          times/*clock*}}]
    (let [pool (Executors/newSingleThreadScheduledExecutor thread-factory)
          !latch (promise)
+         done?  (partial realized? !latch)
          current (atom nil)
          f      (bound-fn* f)
          error! (bound-fn* error-handler)
-         done!  (some-> on-finished bound-fn*)]
+         done!  (some-> on-finished bound-fn*)
+         next-times (atom nil)]
      (letfn [(close []
                (.shutdown pool)
                (when (and (deliver !latch nil) done!)
@@ -70,7 +72,7 @@
              (schedule-loop [[curr-time & times]]
                (letfn [(task []
                          (if (try
-                               (when-not (realized? !latch)
+                               (when-not (done?)
                                  (f curr-time)
                                  true)
                                (catch Exception e
@@ -79,7 +81,9 @@
                                    (catch Exception e
                                      (log/error e "error calling chime error-handler, stopping schedule")))))
 
-                           (schedule-loop times)
+                           (do
+                             (reset! next-times times)
+                             (schedule-loop times))
                            (close)))]
 
                  (if curr-time
@@ -105,49 +109,63 @@
          (deref [_ ms timeout-val] (deref !latch ms timeout-val))
 
          IPending ;; whole-schedule
-         (isRealized [_] (realized? !latch))
+         (isRealized [_] (done?))
 
          ScheduledFuture ;; next-job
          (cancel [_ interrupt?] ;; expose interrupt facilities (opt-in)
            (when-let [^ScheduledFuture fut @current]
-             (or (.isCancelled fut)
-                 (.cancel fut interrupt?))))
+             (let [ret (or (.isCancelled fut)
+                           (.cancel fut interrupt?))]
+               (when (and (true? ret)
+                          (not (done?)))
+                 ;; don't forget to re-schedule starting
+                 ;; with the job AFTER the cancelled one
+                 (some-> @next-times next schedule-loop))
+             ret)))
          (getDelay [_ time-unit] ;; expose remaining time until next chime
            (when-let [^ScheduledFuture fut @current]
-             (.getDelay fut time-unit)))
+             (if (.isCancelled fut)
+               -1
+               (.getDelay fut time-unit))))
          (isCancelled [_]
            (when-let [^ScheduledFuture fut @current]
-             (.isCancelled fut))))))))
+             (.isCancelled fut)))
+
+         ISeq ;; whole schedule
+         (first [_] (first @next-times))
+         ;; not to be used directly (danger of holding the head)
+         ;; but more  to support seq fns like `second`, `nth` etc
+         (next [_] (next @next-times))
+         (more [_] (rest @next)))))))
 
 ;; HIGH-LEVEL API REFLECTING THE SEMANTICS OF THE CONSTRUCT ABOVE
 ;; ==============================================================
 
-(defn cancel-next!
-  "Cancels the next upcoming chime, potentially abruptly,
+(defn cancel-current!
+  "Cancels the upcoming chime, potentially abruptly,
    as it may have already started. The rest of the schedule
    will remain unaffected, unless the interruption is handled
    by the error-handler (i.e. `InterruptedException`), and it
-   returns falsey, or throws (the default one returns true).
+   returns falsy, or throws (the default one returns true).
    Returns true if already cancelled."
-  ([sched]
-   (cancel-next! sched true)) ;; essentially the same as `future-cancel`
-  ([^ScheduledFuture sched interrupt?]
-   (.cancel sched interrupt?)))
+  [sched]
+  (future-cancel sched))
 
-(defn until-next-chime
+(defn until-current
   "Returns the remaining time (in millis by default)
-   until the next chime (via `ScheduledFuture.getDelay()`)."
+   until the currently scheduled chime (via `ScheduledFuture.getDelay()`).
+   If it has been cancelled returns -1."
   ([sched]
-   (until-next-chime sched TimeUnit/MILLISECONDS))
+   (until-current sched TimeUnit/MILLISECONDS))
   ([^ScheduledFuture sched time-unit]
    (.getDelay sched time-unit)))
 
-(defn cancel-next?!
-  "Like `cancel-next!`, but only if the next task
-   hasn't already started (millisecond tolerance)."
+(defn cancel-current?!
+  "Like `cancel-current!`, but only if the upcoming task
+   hasn't already started (with millisecond tolerance)."
   [^ScheduledFuture sched]
-  (when (pos? (until-next-chime sched))
-    (cancel-next! sched)))
+  (when (pos? (until-current sched))
+    (cancel-current! sched)))
 
 (defn shutdown!
   "Gracefully closes the entire schedule (per `pool.shutdown()`).
@@ -155,17 +173,27 @@
    otherwise it will be allowed to finish."
   [^AutoCloseable sched]
   (-> (doto sched (.close))
-      cancel-next?!))
+      cancel-current?!))
 
 (defn shutdown-now!
   "Attempts a graceful shutdown (per `shutdown!`), but if the latest task
    is already happening attempts to interrupt it. Semantically equivalent
-   to `pool.shutdownNow()` when called with <interrupt?> = true (the default)."
-  ([sched]
-   (shutdown-now! sched true))
-  ([sched interrupt?]
-   (or (shutdown! sched)
-       (cancel-next! sched interrupt?))))
+   to `pool.shutdownNow()`."
+  [sched]
+  (or (shutdown! sched)
+      (cancel-current! sched)))
+
+(defn is-shutdown?
+  "Returns true if the entire schedule has been shut down,
+   false otherwise."
+  [sched]
+  (realized? sched))
+
+(defn current-cancelled?
+  "Returns true if the current chime has been cancelled,
+   false otherwise. A mere wrapper around `future-cancelled?`."
+  [sched]
+  (future-cancelled? sched))
 
 (defn wait-for
   "Blocking call for waiting until the schedule finishes,
@@ -175,13 +203,13 @@
   ([sched timeout-ms timeout-val]
    (deref sched timeout-ms timeout-val)))
 
-(defn next-chime-at
+(defn current-at
   "Returns the (future) `ZonedDateTime` when the next chime will occur,
-   or nil if it has already started (millisecond tolerance)."
+   or nil if it has already started (with millisecond tolerance), or cancelled."
   (^ZonedDateTime [sched]
-   (next-chime-at sched times/*clock*))
+   (current-at sched times/*clock*))
   (^ZonedDateTime [sched ^Clock clock]
-   (let [remaining (until-next-chime sched)]
+   (let [remaining (until-current sched)]
      (when (pos? remaining)
        (-> (ZonedDateTime/now clock)
            (.plus remaining ChronoUnit/MILLIS))))))
