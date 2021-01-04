@@ -66,21 +66,21 @@ If you're confident you understand that the first 3 are about the entire schedul
 whereas the last one is about a single task, you can use the returned object as is.
 That said, there is a somewhat higher-level api to assist you (see below).   
 
-### `chime.schedule/cancel-next!` _[schedule]_
+### `chime.schedule/cancel-current!` _[schedule]_
 Cancels the next upcoming chime, potentially abruptly, as it may have already started. The rest of the schedule
 will remain unaffected, unless the interruption is handled by the error-handler (i.e. `InterruptedException`), and it
 returns falsey (or throws). The `cancel-next?!` variant does the same thing, unless the next task has already started.
 
-### `chime.schedule/until-next` _[schedule]_
+### `chime.schedule/until-current` _[schedule]_
 Returns the remaining time (in millis by default) until the next chime. 
 
 ### `chime.schedule/shutdown!` _[schedule]_
 Gracefully closes the entire schedule (per `pool.shutdown()`). If the next task hasn't started yet, it will be cancelled,
 otherwise it will be allowed to finish.
 
-### `chime.schedule/shutdown-now!` _[schedule ?interrupt?]_
+### `chime.schedule/shutdown-now!` _[schedule]_
 Attempts a graceful shutdown (per `shutdown!`), but if the latest task is already happening attempts to interrupt it. 
-Semantically equivalent to `pool.shutdownNow()` when called with `interrupt?` = true (the default).
+Semantically equivalent to `pool.shutdownNow()`.
 
 From a user's perspective I find the above separation of concerns rather empowering, as I can ask questions/make decisions about 
 the next-task VS the entire-schedule separately - and this is essentially the crux of the divergence from `jarohen/chime`. 
