@@ -2,7 +2,7 @@
   "Lightweight scheduling library."
   (:require [clojure.tools.logging :as log]
             [chime.times :as times])
-  (:import (clojure.lang IDeref IBlockingDeref IPending ISeq)
+  (:import (clojure.lang IDeref IBlockingDeref IPending ISeq IAtom2 PersistentQueue)
            (java.time Instant Clock ZonedDateTime)
            (java.time.temporal ChronoUnit)
            (java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit ScheduledFuture)
@@ -19,6 +19,19 @@
 (defn default-error-handler [e]
   (log/warn e "Error running scheduled fn")
   true)
+
+(def ^:private seq-step
+  (juxt first next))
+
+(defn- atom-step [a]
+  (let [[old _] (swap-vals! a pop)]
+    [(first old) a]))
+
+(defn mutable-times
+  [& times]
+  (-> PersistentQueue/EMPTY
+      (into times)
+      atom))
 
 (defn chime-at
   "Calls <f> with the current time, at every time in the <times> sequence.
@@ -63,37 +76,39 @@
          f      (bound-fn* f)
          error! (bound-fn* error-handler)
          done!  (some-> on-finished bound-fn*)
-         next-times (atom nil)]
+         next-times (atom nil)
+         step* (if (instance? IAtom2 times) atom-step seq-step)]
      (letfn [(close []
                (.shutdown pool)
                (when (and (deliver !latch nil) done!)
                  (done!)))
 
-             (schedule-loop [[curr-time & times]]
-               (letfn [(task []
-                         (if (try
-                               (when-not (done?)
-                                 (f curr-time)
-                                 true)
-                               (catch Exception e
-                                 (try
-                                   (error! e)
-                                   (catch Exception e
-                                     (log/error e "error calling chime error-handler, stopping schedule")))))
+             (schedule-loop [times]
+               (let [[curr-time times] (step* times)]
+                 (letfn [(task []
+                          (if (try
+                                (when-not (done?)
+                                  (f curr-time)
+                                  true)
+                                (catch Exception e
+                                  (try
+                                    (error! e)
+                                    (catch Exception e
+                                      (log/error e "error calling chime error-handler, stopping schedule")))))
 
-                           (do
-                             (reset! next-times times)
-                             (schedule-loop times))
-                           (close)))]
+                            (do
+                              (reset! next-times times)
+                              (schedule-loop times))
+                            (close)))]
 
-                 (if curr-time
-                   (let [dlay (.between ChronoUnit/MILLIS (times/now clock) curr-time)]
-                     (if (or (pos? dlay)
-                             (not drop-overruns?))
-                       (->> (.schedule pool ^Runnable task dlay TimeUnit/MILLISECONDS)
-                            (reset! current))
-                       (recur times)))
-                   (close))))]
+                  (if curr-time
+                    (let [dlay (.between ChronoUnit/MILLIS (times/now clock) curr-time)]
+                      (if (or (pos? dlay)
+                              (not drop-overruns?))
+                        (->> (.schedule pool ^Runnable task dlay TimeUnit/MILLISECONDS)
+                             (reset! current))
+                        (recur times)))
+                    (close)))))]
 
        ;; kick-off the schedule loop
        (schedule-loop (map times/to-instant times))
