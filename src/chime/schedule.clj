@@ -16,9 +16,13 @@
         (doto (Thread. r)
           (.setName (format "chime-%d" (.incrementAndGet thread-no))))))))
 
-(defn default-error-handler [e]
-  (log/warn e "Error running scheduled fn")
-  true)
+(defn default-error-handler
+  ([e]
+   (default-error-handler nil e))
+  ([id e]
+   (log/warn e (cond-> "Error running scheduled fn"
+                       (some? id) (str \space id)))
+   true))
 
 (def ^:private seq-step
   (juxt first next))
