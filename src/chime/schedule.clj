@@ -32,9 +32,9 @@
     [(first old) a]))
 
 (defn mutable-times
-  [& times]
+  [times]
   (-> PersistentQueue/EMPTY
-      (into times)
+      (into (map times/to-instant) times)
       atom))
 
 (defn chime-at
@@ -80,8 +80,9 @@
          f      (bound-fn* f)
          error! (bound-fn* error-handler)
          done!  (some-> on-finished bound-fn*)
-         next-times (atom nil)
-         step* (if (instance? IAtom2 times) atom-step seq-step)]
+         mutable-times? (instance? IAtom2 times)
+         next-times (when-not mutable-times? (atom nil))
+         step* (if mutable-times? atom-step seq-step)]
      (letfn [(close []
                (.shutdown pool)
                (when (and (deliver !latch nil) done!)
@@ -101,7 +102,7 @@
                                       (log/error e "error calling chime error-handler, stopping schedule")))))
 
                             (do
-                              (reset! next-times times)
+                              (cond->> times next-times (reset! next-times))
                               (schedule-loop times))
                             (close)))]
 
@@ -115,7 +116,9 @@
                     (close)))))]
 
        ;; kick-off the schedule loop
-       (schedule-loop (map times/to-instant times))
+       (cond->> times
+                (not mutable-times?) (map times/to-instant)
+                true schedule-loop)
 
        (reify ;; the returned object represents 2 things
          AutoCloseable ;; whole-schedule
@@ -139,7 +142,9 @@
                           (not (done?)))
                  ;; don't forget to re-schedule starting
                  ;; with the job AFTER the cancelled one
-                 (some-> @next-times next schedule-loop))
+                 (if mutable-times?
+                   (schedule-loop times)
+                   (some-> next-times deref next  schedule-loop)))
              ret)))
          (getDelay [_ time-unit] ;; expose remaining time until next chime
            (when-let [^ScheduledFuture fut @current]
@@ -232,3 +237,18 @@
      (when (pos? remaining)
        (-> (ZonedDateTime/now clock)
            (.plus remaining ChronoUnit/MILLIS))))))
+
+(comment
+  ;; MUTABLE TIMES EXAMPLE
+  (def mut-times
+    (->> (times/every-n-seconds 2)
+         (take 10)
+         mutable-times))
+  (def sched (chime-at mut-times println))
+  (cancel-current?! sched)
+  (swap! mut-times
+         (fn [ts]
+           (if-let [t (last ts)]
+             (conj ts (.plusSeconds ^Instant t 2))
+             ts)))
+  )
