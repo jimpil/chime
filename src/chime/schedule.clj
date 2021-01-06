@@ -93,6 +93,8 @@
                  (letfn [(task []
                           (if (try
                                 (when-not (done?)
+                                  ;; provide the object provided by the user
+                                  ;; (as opposed to Instant converted)
                                   (f curr-time)
                                   true)
                                 (catch Exception e
@@ -107,7 +109,8 @@
                             (close)))]
 
                   (if curr-time
-                    (let [dlay (.between ChronoUnit/MILLIS (times/now clock) curr-time)]
+                    (let [dlay (->> (times/to-instant curr-time)
+                                    (.between ChronoUnit/MILLIS (times/now clock)))]
                       (if (or (pos? dlay)
                               (not drop-overruns?))
                         (->> (.schedule pool ^Runnable task dlay TimeUnit/MILLISECONDS)
@@ -116,9 +119,7 @@
                     (close)))))]
 
        ;; kick-off the schedule loop
-       (cond->> times
-                (not mutable-times?) (map times/to-instant)
-                true schedule-loop)
+       (schedule-loop times)
 
        (reify ;; the returned object represents 2 things
          AutoCloseable ;; whole-schedule
