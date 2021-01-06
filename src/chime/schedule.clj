@@ -180,9 +180,9 @@
   "Returns the remaining time (in millis by default)
    until the currently scheduled chime (via `ScheduledFuture.getDelay()`).
    If it has been cancelled returns -1."
-  ([sched]
+  (^long [sched]
    (until-current sched TimeUnit/MILLISECONDS))
-  ([^ScheduledFuture sched time-unit]
+  (^long [^ScheduledFuture sched time-unit]
    (.getDelay sched time-unit)))
 
 (defn cancel-current?!
