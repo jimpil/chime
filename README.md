@@ -92,6 +92,36 @@ Uses `chime-at` internally, so you can also pass `:error-handler`, and/or `:on-f
 Closing the returned read-channel (gracefully) stops the schedule, and closes the underlying write-channel (where the chime-fn writes).
 This means that no more writes will succeed (even if there is something already scheduled).  
  
+## Mutable schedule
+It is often desirable to add times to a schedule which is already running. 
+`jimpil/chime` supports this via the `schedule/mutable-times` fn. It basically wraps a (finite) 
+sequence of times into an atom (which `chime-at` can work with). 
+
+```clj
+;; the mutable times
+(def mut-times 
+  (->> (times/every-n-seconds 2)
+       (take 10)
+       mutable-times))
+
+;; the mutable schedule
+(def sched (chime-at mut-times println)) 
+
+;; cancelling the upcoming chime works
+(cancel-current?! sched)  
+
+;; append to the schedule (if not finished already)
+(swap! mut-times  
+       (fn [ts]
+         (if-let [t (last ts)]
+           (conj ts (.plusSeconds ^Instant t 2))
+           ts)))
+```
+
+**It is on YOU to add to the schedule BEFORE it finishes!
+Moreover, care should be taken to NOT change the type of the data-structure held in the atom 
+(i.e. `PersistentQueue`).**
+
 ## Notes
 The project was forked in its `v0.3.2` state (actually a little later but not super important). 
 
