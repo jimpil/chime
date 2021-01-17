@@ -2,7 +2,7 @@
   "Lightweight scheduling library."
   (:require [clojure.tools.logging :as log]
             [chime.times :as times])
-  (:import (clojure.lang IDeref IBlockingDeref IPending ISeq IAtom2 PersistentQueue)
+  (:import (clojure.lang IDeref IBlockingDeref IPending ISeq IAtom2 PersistentQueue IAtom IPersistentMap)
            (java.time Instant Clock ZonedDateTime)
            (java.time.temporal ChronoUnit)
            (java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit ScheduledFuture)
@@ -33,9 +33,7 @@
 
 (defn mutable-times
   [times]
-  (-> PersistentQueue/EMPTY
-      (into (map times/to-instant) times)
-      atom))
+  (atom (into PersistentQueue/EMPTY times)))
 
 (defn chime-at
   "Calls <f> with the current time, at every time in the <times> sequence.
@@ -79,14 +77,13 @@
          current (atom nil)
          f      (bound-fn* f)
          error! (bound-fn* error-handler)
-         done!  (some-> on-finished bound-fn*)
          mutable-times? (instance? IAtom2 times)
          next-times (when-not mutable-times? (atom nil))
          step* (if mutable-times? atom-step seq-step)]
      (letfn [(close []
                (.shutdown pool)
-               (when (and (deliver !latch nil) done!)
-                 (done!)))
+               (when (and (deliver !latch nil) on-finished)
+                 (on-finished)))
 
              (schedule-loop [times]
                (let [[curr-time times] (step* times)]
@@ -156,13 +153,50 @@
            (when-let [^ScheduledFuture fut @current]
              (.isCancelled fut)))
 
-         ISeq ;; whole schedule
-         (first [_] (first @next-times))
-         ;; not to be used directly (danger of holding the head)
-         ;; but more  to support seq fns like `second`, `nth` etc
-         (next [_] (next @next-times))
-         (more [_] (rest @next)))))))
+         IAtom
+         (swap [_ f]
+           (if mutable-times?
+             (swap! times f)
+             (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
+         (swap [_ f arg1]
+           (if mutable-times?
+             (swap! times f arg1)
+             (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
+         (swap [_ f arg1 arg2]
+           (if mutable-times?
+             (swap! times f arg1 arg2)
+             (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
+         (swap [_ f arg1 arg2 more]
+           (if mutable-times?
+             (swap! times (partial apply f) arg1 arg2 more)
+             (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
 
+         IAtom2
+         (swapVals [_ f]
+           (if mutable-times?
+             (swap-vals! times f)
+             (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
+         (swapVals [_ f arg1]
+           (if mutable-times?
+             (swap-vals! times f arg1)
+             (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
+         (swapVals [_ f arg1 arg2]
+           (if mutable-times?
+             (swap-vals! times f arg1 arg2)
+             (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
+         (swapVals [_ f arg1 arg2 more]
+           (if mutable-times?
+             (swap-vals! times (partial apply f) arg1 arg2 more)
+             (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
+
+         ;ISeq ;; whole schedule
+         ;(first [_] (some-> next-times deref first))
+         ;;; not to be used directly (danger of holding the head)
+         ;;; but more  to support seq fns like `second`, `nth` etc
+         ;(next [_] (some-> next-times deref next))
+         ;(more [_] (some-> next-times deref rest))
+
+         )))))
 ;; HIGH-LEVEL API REFLECTING THE SEMANTICS OF THE CONSTRUCT ABOVE
 ;; ==============================================================
 
@@ -239,6 +273,31 @@
        (-> (ZonedDateTime/now clock)
            (.plus remaining ChronoUnit/MILLIS))))))
 
+(defn- append-with*
+  [f sched]
+  (doto sched (swap! f)))
+
+(defn append-absolute!
+  "Assuming a mutable schedule which has not finished,
+   appends the specified <times> to it. These should be
+   *after* the last one already in."
+  [sched & times]
+  (-> (fn [tsq]
+        (cond-> tsq
+                (seq times)
+                (into times)))
+      (append-with* sched)))
+
+(defn append-relative-to-last!
+  "Assuming a mutable schedule which has not finished,
+   appends the result of `(offset-fn last-chime)` into it."
+  [sched offset-fn]
+  (-> (fn [ts]
+        (if-let [t (last ts)]
+          (conj ts (offset-fn t))
+          ts))
+      (append-with* sched)))
+
 (comment
   ;; MUTABLE TIMES EXAMPLE
   (def mut-times
@@ -247,9 +306,6 @@
          mutable-times))
   (def sched (chime-at mut-times println))
   (cancel-current?! sched)
-  (swap! mut-times
-         (fn [ts]
-           (if-let [t (last ts)]
-             (conj ts (.plusSeconds ^Instant t 2))
-             ts)))
+  (append-relative-to-last! sched #(.plusSeconds ^Instant % 2))
+
   )
