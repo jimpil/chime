@@ -99,28 +99,21 @@ sequence of times into an atom (which `chime-at` can work with).
 
 ```clj
 ;; the mutable times
-(def mut-times 
+(def times 
   (->> (times/every-n-seconds 2)
-       (take 10)
-       mutable-times))
+       (take 10)))
 
 ;; the mutable schedule
-(def sched (chime-at mut-times println)) 
+(def sched (chime-at times println {:mutable? true})) 
 
 ;; cancelling the upcoming chime works
 (cancel-current?! sched)  
 
 ;; append to the schedule (if not finished already)
-(swap! mut-times  
-       (fn [ts]
-         (if-let [t (last ts)]
-           (conj ts (.plusSeconds ^Instant t 2))
-           ts)))
+(append-relative-to-last! sched #(.plusSeconds ^Instant % 2))
 ```
 
-**It is on YOU to add to the schedule BEFORE it finishes!
-Moreover, care should be taken to NOT change the type of the data-structure held in the atom 
-(i.e. `PersistentQueue`).**
+**It is on YOU to add to the schedule BEFORE it finishes!**
 
 ## Notes
 The project was forked in its `v0.3.2` state (actually a little later but not super important). 

@@ -31,7 +31,7 @@
   (let [[old _] (swap-vals! a pop)]
     [(first old) a]))
 
-(defn mutable-times
+(defn- mutable-times
   [times]
   (atom (into PersistentQueue/EMPTY times)))
 
@@ -67,19 +67,20 @@
 
   (^AutoCloseable [times f] (chime-at times f nil))
 
-  (^AutoCloseable [times f {:keys [error-handler on-finished thread-factory clock drop-overruns?]
+  (^AutoCloseable [times f {:keys [error-handler on-finished thread-factory clock drop-overruns? mutable?]
                             :or {error-handler  default-error-handler
                                  thread-factory default-thread-factory ;; loom-friendly (i.e. virtual threads)
-                                 clock          times/*clock*}}]
-   (let [pool (Executors/newSingleThreadScheduledExecutor thread-factory)
+                                 clock          times/*clock*
+                                 mutable?       false}}]
+   (let [times (cond-> times mutable? mutable-times)
+         step* (if mutable? atom-step seq-step)
+         pool  (Executors/newSingleThreadScheduledExecutor thread-factory)
          !latch (promise)
          done?  (partial realized? !latch)
          current (atom nil)
          f      (bound-fn* f)
          error! (bound-fn* error-handler)
-         mutable-times? (instance? IAtom2 times)
-         next-times (when-not mutable-times? (atom nil))
-         step* (if mutable-times? atom-step seq-step)]
+         next-times (when-not mutable? (atom nil))]
      (letfn [(close []
                (.shutdown pool)
                (when (and (deliver !latch nil) on-finished)
@@ -140,7 +141,7 @@
                           (not (done?)))
                  ;; don't forget to re-schedule starting
                  ;; with the job AFTER the cancelled one
-                 (if mutable-times?
+                 (if mutable?
                    (schedule-loop times)
                    (some-> next-times deref next  schedule-loop)))
              ret)))
@@ -155,37 +156,37 @@
 
          IAtom
          (swap [_ f]
-           (if mutable-times?
+           (if mutable?
              (swap! times f)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
          (swap [_ f arg1]
-           (if mutable-times?
+           (if mutable?
              (swap! times f arg1)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
          (swap [_ f arg1 arg2]
-           (if mutable-times?
+           (if mutable?
              (swap! times f arg1 arg2)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
          (swap [_ f arg1 arg2 more]
-           (if mutable-times?
+           (if mutable?
              (swap! times (partial apply f) arg1 arg2 more)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
 
          IAtom2
          (swapVals [_ f]
-           (if mutable-times?
+           (if mutable?
              (swap-vals! times f)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
          (swapVals [_ f arg1]
-           (if mutable-times?
+           (if mutable?
              (swap-vals! times f arg1)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
          (swapVals [_ f arg1 arg2]
-           (if mutable-times?
+           (if mutable?
              (swap-vals! times f arg1 arg2)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
          (swapVals [_ f arg1 arg2 more]
-           (if mutable-times?
+           (if mutable?
              (swap-vals! times (partial apply f) arg1 arg2 more)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
 
@@ -300,11 +301,10 @@
 
 (comment
   ;; MUTABLE TIMES EXAMPLE
-  (def mut-times
+  (def times
     (->> (times/every-n-seconds 2)
-         (take 10)
-         mutable-times))
-  (def sched (chime-at mut-times println))
+         (take 10)))
+  (def sched (chime-at times println {:mutable? true}))
   (cancel-current?! sched)
   (append-relative-to-last! sched #(.plusSeconds ^Instant % 2))
 
