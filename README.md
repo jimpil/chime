@@ -8,7 +8,8 @@ I remain utterly grateful to the original maintainer, not only for the code, but
 If you're thinking of using this library, please read the original README first (90% of the things apply here too).
 
 ## Where
-TODO
+[![Clojars Project](https://clojars.org/jimpil/chime/latest-version.svg)](https://clojars.org/jimpil/chime)
+
 
 ## Why 
 The underlying idea behind `jarohen/chime` is very powerful. Its power stems from the fact that producing the times you want scheduled, 
