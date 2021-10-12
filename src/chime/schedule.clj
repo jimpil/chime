@@ -2,10 +2,10 @@
   "Lightweight scheduling library."
   (:require [clojure.tools.logging :as log]
             [chime.times :as times])
-  (:import (clojure.lang IDeref IBlockingDeref IPending ISeq IAtom2 PersistentQueue IAtom IPersistentMap)
+  (:import (clojure.lang IDeref IBlockingDeref IPending ISeq IAtom2 PersistentQueue IAtom)
            (java.time Instant Clock ZonedDateTime)
            (java.time.temporal ChronoUnit)
-           (java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit ScheduledFuture)
+           (java.util.concurrent ThreadFactory TimeUnit ScheduledFuture ScheduledThreadPoolExecutor)
            (java.lang AutoCloseable)
            (java.util.concurrent.atomic AtomicLong)))
 
@@ -14,7 +14,7 @@
     (reify ThreadFactory
       (newThread [_ r]
         (doto (Thread. r)
-          (.setName (format "chime-%d" (.incrementAndGet thread-no))))))))
+          (.setName (str "chime-" (.incrementAndGet thread-no))))))))
 
 (defn default-error-handler
   ([e]
@@ -74,7 +74,8 @@
                                  mutable?       false}}]
    (let [times (cond-> times mutable? mutable-times)
          step* (if mutable? atom-step seq-step)
-         pool  (Executors/newSingleThreadScheduledExecutor thread-factory)
+         pool  (doto (ScheduledThreadPoolExecutor. 1 ^ThreadFactory thread-factory)
+                 (.setRemoveOnCancelPolicy true))
          !latch (promise)
          done?  (partial realized? !latch)
          current (atom nil)

@@ -101,16 +101,15 @@
   "Returns the next `ZonedDateTime` object
    when the job with <id> will chime."
   [scheduler id]
-  (c/current-at (get @scheduler id)))
+  (some-> (get @scheduler id) c/current-at))
 
 (defn upcoming-chimes-at
   "Returns a map from job-id => ZonedDateTime."
   [scheduler]
-  (let [jobs @scheduler
-        job-ids (keys jobs)]
-    (->> job-ids
-         (map #(c/current-at (get jobs %)))
-         (zipmap job-ids))))
+  (reduce-kv
+    (fn [ret k v] (assoc ret k (c/current-at v)))
+    {}
+    @scheduler))
 
 (comment
   (require '[chime.times :as times])
