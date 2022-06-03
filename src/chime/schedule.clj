@@ -84,7 +84,7 @@
          next-times (when-not mutable? (atom nil))]
      (letfn [(close []
                (.shutdown pool)
-               (when (and (deliver !latch nil) on-finished)
+               (when (and (deliver !latch ::done) on-finished)
                  (on-finished)))
 
              (schedule-loop [times]
@@ -144,7 +144,7 @@
                  ;; with the job AFTER the cancelled one
                  (if mutable?
                    (schedule-loop times)
-                   (some-> next-times deref next  schedule-loop)))
+                   (schedule-loop (swap! next-times next))))
              ret)))
          (getDelay [_ time-unit] ;; expose remaining time until next chime
            (when-let [^ScheduledFuture fut @current]
@@ -310,14 +310,15 @@
 
   ;; MUTABLE TIMES EXAMPLE
   (defn times []
-    (->> (times/every-n-seconds 2)
-         ;(take 10)
+    (->> (times/every-n-seconds 5)
+         (take 10)
          ))
   (def sched (chime-at (times) println {:thread-factory vthread-factory
-                                      ;:mutable? true
+                                        :mutable? true
                                       }))
   (cancel-current?! sched)
   (until-current sched)
   (append-relative-to-last! sched #(.plusSeconds ^Instant % 2))
   (shutdown! sched)
+  (future-done? sched)
   )
