@@ -63,7 +63,7 @@
   Returns an AutoCloseable that you can `.close` in order to shutdown the schedule.
   You can also deref the return value to wait for the schedule to finish.
 
-  When the schedule is either manually cancelled or exhausted, the <on-finished> callback will be called."
+  When the schedule is either manually closed or exhausted, the <on-finished> callback will be called."
 
   (^AutoCloseable [times f] (chime-at times f nil))
 
@@ -148,12 +148,7 @@
              ret)))
          (getDelay [_ time-unit] ;; expose remaining time until next chime
            (when-let [^ScheduledFuture fut @current]
-             (if (.isCancelled fut)
-               -1
-               (.getDelay fut time-unit))))
-         (isCancelled [_]
-           (when-let [^ScheduledFuture fut @current]
-             (.isCancelled fut)))
+             (.getDelay fut time-unit)))
 
          IAtom
          (swap [_ f]
@@ -202,7 +197,7 @@
 ;; HIGH-LEVEL API REFLECTING THE SEMANTICS OF THE CONSTRUCT ABOVE
 ;; ==============================================================
 
-(defn cancel-current!
+(defn skip-next!
   "Cancels the upcoming chime, potentially abruptly,
    as it may have already started. The rest of the schedule
    will remain unaffected, unless the interruption is handled
@@ -212,21 +207,30 @@
   [sched]
   (future-cancel sched))
 
-(defn until-current
+(defn until-next
   "Returns the remaining time (in millis by default)
-   until the currently scheduled chime (via `ScheduledFuture.getDelay()`).
-   If it has been cancelled returns -1."
+   until the next non-cancelled chime."
   (^long [sched]
-   (until-current sched TimeUnit/MILLISECONDS))
+   (until-next sched TimeUnit/MILLISECONDS))
   (^long [^ScheduledFuture sched time-unit]
    (.getDelay sched time-unit)))
 
-(defn cancel-current?!
-  "Like `cancel-current!`, but only if the upcoming task
+(defn skip-next?!
+  "Like `skip-next!`, but only if the upcoming task
    hasn't already started (with millisecond tolerance)."
   [^ScheduledFuture sched]
-  (when (pos? (until-current sched))
-    (cancel-current! sched)))
+  (when (pos? (until-next sched))
+    (skip-next! sched)))
+
+(defn skip-next-n!
+  "Cancels the next <n> tasks.
+   Returns a vector of booleans (per `skip-next!`)"
+  [^ScheduledFuture sched n]
+  (into []
+        (comp (map (fn [_] (skip-next! sched)))
+              (take-while true?))
+
+        (range n)))
 
 (defn shutdown!
   "Gracefully closes the entire schedule (per `pool.shutdown()`).
@@ -234,7 +238,7 @@
    otherwise it will be allowed to finish."
   [^AutoCloseable sched]
   (-> (doto sched (.close))
-      cancel-current?!))
+      skip-next?!))
 
 (defn shutdown-now!
   "Attempts a graceful shutdown (per `shutdown!`), but if the latest task
@@ -242,23 +246,17 @@
    to `pool.shutdownNow()`."
   [sched]
   (or (shutdown! sched)
-      (cancel-current! sched)))
+      (skip-next! sched)))
 
-(defn is-shutdown?
-  "Returns true if the entire schedule has been shut down,
-   false otherwise."
+(defn finished?
+  "Returns true if the entire schedule has finished, false otherwise."
   [sched]
   (realized? sched))
 
-(defn current-cancelled?
-  "Returns true if the current chime has been cancelled,
-   false otherwise. A mere wrapper around `future-cancelled?`."
-  [sched]
-  (future-cancelled? sched))
-
 (defn wait-for
   "Blocking call for waiting until the schedule finishes,
-   or the provided <timeout-ms> has elapsed."
+   or the provided <timeout-ms> has elapsed. Useful as the
+   last expression in `with-open`."
   ([sched]
    (deref sched))
   ([sched timeout-ms timeout-val]
@@ -270,7 +268,7 @@
   (^ZonedDateTime [sched]
    (current-at sched times/*clock*))
   (^ZonedDateTime [sched ^Clock clock]
-   (let [remaining (until-current sched)]
+   (let [remaining (until-next sched)]
      (when (pos? remaining)
        (-> (ZonedDateTime/now clock)
            (.plus remaining ChronoUnit/MILLIS))))))
@@ -316,9 +314,22 @@
   (def sched (chime-at (times) println {:thread-factory vthread-factory
                                         :mutable? true
                                       }))
-  (cancel-current?! sched)
-  (until-current sched)
+  (skip-next?! sched)
+  (until-next sched)
   (append-relative-to-last! sched #(.plusSeconds ^Instant % 2))
   (shutdown! sched)
   (future-done? sched)
+
+  (with-open [sch (chime-at
+                    (take 10 (times/every-n-seconds 1))
+                    println
+                    {:thread-factory vthread-factory
+                     :on-finished #(println "done")
+                     :mutable? true})]
+    (append-relative-to-last! sch #(.plusSeconds ^Instant % 2))
+
+    ;(wait-for sch)
+    (wait-for sch 12000 :timeout) ;; occasionally succeeds
+    )
+
   )
