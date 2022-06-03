@@ -301,12 +301,23 @@
       (append-with* sched)))
 
 (comment
-  ;; MUTABLE TIMES EXAMPLE
-  (def times
-    (->> (times/every-n-seconds 2)
-         (take 10)))
-  (def sched (chime-at times println {:mutable? true}))
-  (cancel-current?! sched)
-  (append-relative-to-last! sched #(.plusSeconds ^Instant % 2))
 
+  (def vthread-factory
+    "A `ThreadFactory` that produces virtual-threads."
+    (-> (Thread/ofVirtual)
+        (.name "chime-" 1)
+        .factory))
+
+  ;; MUTABLE TIMES EXAMPLE
+  (defn times []
+    (->> (times/every-n-seconds 2)
+         ;(take 10)
+         ))
+  (def sched (chime-at (times) println {:thread-factory vthread-factory
+                                      ;:mutable? true
+                                      }))
+  (cancel-current?! sched)
+  (until-current sched)
+  (append-relative-to-last! sched #(.plusSeconds ^Instant % 2))
+  (shutdown! sched)
   )
