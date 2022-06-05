@@ -262,11 +262,11 @@
   ([sched timeout-ms timeout-val]
    (deref sched timeout-ms timeout-val)))
 
-(defn current-at
+(defn next-at
   "Returns the (future) `ZonedDateTime` when the next chime will occur,
    or nil if it has already started (with millisecond tolerance), or cancelled."
   (^ZonedDateTime [sched]
-   (current-at sched times/*clock*))
+   (next-at sched times/*clock*))
   (^ZonedDateTime [sched ^Clock clock]
    (let [remaining (until-next sched)]
      (when (pos? remaining)
@@ -330,6 +330,22 @@
 
     ;(wait-for sch)
     (wait-for sch 12000 :timeout) ;; occasionally succeeds
+    )
+
+  (require '[clj-async-profiler.core :as prof])
+  (prof/profile
+    (let [sch (chime-at
+                (take 100 (times/every-n-seconds 1))
+                println
+                {:on-finished #(println "done")
+                 :mutable? true})]
+      ;; simulate async mutation
+      (chime-at [(-> (times/now)
+                     (.plusSeconds 20))]
+                (fn [_] (append-relative-to-last! sch #(.plusSeconds ^Instant % 2)))
+                {:on-finished #(println "mutated `sch`")})
+
+      (wait-for sch))
     )
 
   )

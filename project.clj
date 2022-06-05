@@ -9,6 +9,8 @@
   :dependencies [[org.clojure/clojure "1.11.1" :scope "provided"]
                  [org.clojure/tools.logging "1.2.4"]
                  [org.clojure/core.async "1.5.648" :scope "provided"]]
+  :profiles
+  {:dev {:dependencies [[com.clojure-goes-fast/clj-async-profiler "0.5.1"]]}}
 
   :release-tasks [["vcs" "assert-committed"]
                   ["change" "version" "leiningen.release/bump-version" "release"]
