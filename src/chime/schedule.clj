@@ -298,6 +298,21 @@
           ts))
       (append-with* sched)))
 
+(defn interruptable*
+  "Returns a function which wraps <f>
+   with a `Thread.isInterrupted()` check.
+   Worth considering when using `shutdown-now!`."
+  [f]
+  (fn [x]
+    (when-not (.isInterrupted (Thread/currentThread))
+      (f x))))
+
+(defmacro interruptable
+  "Like `interruptable*`, but for arbitrary code that
+   doesn't care about the argument passed to job-fns."
+  [& body]
+  `(interruptable* (fn [~'_] ~@body)))
+
 (comment
 
   (def vthread-factory
