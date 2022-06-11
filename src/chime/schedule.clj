@@ -301,7 +301,7 @@
 (defn interruptable*
   "Returns a function which wraps <f>
    with a `Thread.isInterrupted()` check.
-   Worth considering when using `shutdown-now!`."
+   Worth considering when using `shutdown-now!` or `skip-next!`."
   [f]
   (fn [x]
     (when-not (.isInterrupted (Thread/currentThread))
