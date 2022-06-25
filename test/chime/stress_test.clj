@@ -5,18 +5,18 @@
   (:import (java.time Instant)
            (java.time.temporal ChronoUnit)))
 
-(def vthread-factory
+#_(def vthread-factory
   "A `ThreadFactory` that produces virtual-threads."
   (-> (Thread/ofVirtual)
       (.name "chime-" 1)
       .factory))
 
-(defn- calculate-drift
+#_(defn- calculate-drift
   [^Instant i]
   (let [now (times/now)]
     (println "Drift-ms:" (.between ChronoUnit/MILLIS i now))))
 
-(defn stress [n-schedules]
+#_(defn stress [n-schedules]
   (let [sched (scheduler/chiming-agent
                 {:thread-factory vthread-factory
                  :on-finished (partial println "Finished-")})
