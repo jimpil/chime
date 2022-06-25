@@ -7,10 +7,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
-    - name: cache-deps
-      uses: actions/cache@v1
+    - name: Cache Deps
+      id: cache-deps
+      uses: actions/cache@v3
       env:
         cache-name: cache-deps
       with:
@@ -25,3 +26,5 @@ jobs:
       run: lein deps
     - name: run-tests
       run: lein test
+    - name: cleanup
+      run: lein clean

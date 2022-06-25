@@ -10,7 +10,7 @@
   {:year        {:lower 1970 :upper 9999}
    :day-of-week {:lower 1 :upper 7}
    :month       {:lower 1 :upper 12}
-   :day        ^{:flags #{"L"}} {:lower 1 :upper 31}
+   :day         {:lower 1 :upper 31}
    :hour        {:lower 0 :upper 23}
    :minute      {:lower 0 :upper 59}
    :second      {:lower 0 :upper 59}})
@@ -127,11 +127,11 @@
   ([ks cron-expr]
    (let [items (-> cron-expr str/trim (str/split #"\s+"))]
      (if (= (count items) (count ks))
-       (->> items
-            (map (fn [k cron-expr]
-                   [k (parse-list k cron-expr)])
-                 ks)
-            (into {}))
+       (into {}
+             (map (fn [k cron-expr]
+                    [k (parse-list k cron-expr)])
+                  ks
+                  items))
        (throw
          (ex-info "Cron expression has more/less components than field-keys provided"
                   {:expr cron-expr
@@ -140,10 +140,9 @@
 
 (defn- ranges->seq
   [ranges]
-  (->> ranges
-       (mapcat (fn [{:keys [from to step]}]
-                 (range from (inc to) step)))
-       sort))
+  (mapcat (fn [{:keys [from to step]}]
+            (range from (inc to) step))
+          ranges))
 
 (defn at* [x]
   [{:from x :to x :step 1}])
