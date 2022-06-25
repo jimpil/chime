@@ -4,7 +4,7 @@
   (:import (java.time LocalDate DayOfWeek Year ZonedDateTime ZoneId Clock)
            (java.time.temporal TemporalAdjusters Temporal)))
 
-(set! *warn-on-reflection* true)
+;(set! *warn-on-reflection* true)
 
 (def bounds
   {:year        {:lower 1970 :upper 9999}
