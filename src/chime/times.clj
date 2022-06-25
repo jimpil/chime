@@ -7,7 +7,7 @@
            (java.time.format TextStyle)))
 
 (defonce ^Clock utc-clock (Clock/systemUTC))
-(def ^:dynamic *clock*
+(def ^{:dynamic true :tag 'java.time.Clock} *clock*
   "The clock used to determine 'now' (defaults to `Clock/systemUTC`). 
    See `with-clock` for re-binding it."
   utc-clock)
