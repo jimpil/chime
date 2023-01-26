@@ -3,7 +3,8 @@
    Remembers actively scheduled jobs, until they finish, or are manually cancelled."
   (:require [chime.schedule :as c]
             [chime.times :as times]
-            [clojure.tools.logging :as log]))
+            [clojure.tools.logging :as log])
+  (:import (java.time Duration)))
 
 (defn chiming-agent
   "Returns an `agent` dressed up as a scheduler.
@@ -14,13 +15,14 @@
    as the first argument to all functions in this namespace."
   ([]
    (chiming-agent nil))
-  ([{:keys [error-handler on-finished]
+  ([{:keys [error-handler on-finished thread-factory]
      :or {error-handler c/default-error-handler}}]
    (agent {}
           :error-handler (fn [_ e] (log/warn e "`chiming-agent` error! Carrying-on with the schedule(s) ..."))
           ;; will become the options to `chime-at`
           :meta {:on-finished on-finished
-                 :error-handler error-handler})))
+                 :error-handler error-handler
+                 :thread-factory thread-factory})))
 
 (defn- forget-on-finish!
   [scheduler id finish!]
@@ -55,6 +57,13 @@
     (fn [jobs]
       (merge jobs (schedule* scheduler id->job)))))
 
+
+(defn scheduled-ids
+  "Returns the ids of all the ongoing jobs of this <scheduler>,
+   or nil if there aren't any."
+  [scheduler]
+  (keys @scheduler))
+
 (defn- unschedule1
   [shutdown-fn jobs id]
   (if-let [scheduled (get jobs id)]
@@ -70,6 +79,9 @@
   "Given a <scheduler>, gracefully un-schedules (per `chime.schedule/shutdown!`)
    the jobs referred to by <ids>. Triggers the `:on-finished` handler
    (see `scheduler` ctor)."
+  ([scheduler]
+   (->> (scheduled-ids scheduler)
+        (unschedule! scheduler)))
   ([scheduler ids]
    (unschedule! scheduler nil ids))
   ([scheduler dlay-millis ids]
@@ -81,6 +93,9 @@
 
 (defn unschedule-now!
   "Like `unschedule!`, but uses `chime.schedule/shutdown-now!`."
+  ([scheduler]
+   (->> (scheduled-ids scheduler)
+        (unschedule-now! scheduler)))
   ([scheduler ids]
    (unschedule-now! scheduler nil ids))
   ([scheduler dlay-millis ids]
@@ -89,13 +104,6 @@
        (c/chime-at [(.plusMillis (times/now) dlay-millis)] f)
        (f nil))
      nil)))
-
-
-(defn scheduled-ids
-  "Returns the ids of all the ongoing jobs of this <scheduler>,
-   or nil if there aren't any."
-  [scheduler]
-  (keys @scheduler))
 
 (defn upcoming-chime-at
   "Returns the next `ZonedDateTime` object
@@ -108,9 +116,23 @@
   [scheduler]
   (update-vals @scheduler c/next-at))
 
+(defn until-next-chime
+  "Returns a `java.time.Duration` representing the (time) distance
+   from now (inclusive) until the next chime (exclusive) on this <scheduler>."
+  ^Duration [scheduler]
+  (->> scheduler
+       upcoming-chimes-at
+       vals
+       sort
+       first
+       (Duration/between (times/now))))
+
 (comment
   (require '[chime.times :as times])
-  (def SCHEDULER (chiming-agent {:on-finished #(println "Job" % "finished...")}))
+  (def SCHEDULER (chiming-agent {:on-finished #(println "Job" % "finished...")
+                                 :thread-factory (-> (Thread/ofVirtual)
+                                                     (.name "chime-" 0)
+                                                     .factory)}))
   (schedule! SCHEDULER
              {:foo [(partial println "Hi")
                     times/every-n-seconds]
@@ -119,6 +141,18 @@
                     #(take 5 (times/every-n-millis 1500))]})
 
   (upcoming-chimes-at SCHEDULER)
+  (until-next-chime SCHEDULER)
   (unschedule! SCHEDULER nil [:foo])
   (scheduled-ids SCHEDULER) ;; => nil
+
+  (->> (zipmap (range 1 51)
+               (map (fn [n]
+                      [(fn [_] (println "Hi from" (Thread/currentThread)))
+                       (partial times/every-n-seconds n)])
+                    (range 1 51)))
+       (schedule! SCHEDULER))
+
+  (unschedule! SCHEDULER)
+
+
   )
