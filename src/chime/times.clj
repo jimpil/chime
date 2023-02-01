@@ -1,10 +1,10 @@
 (ns chime.times
   (:require [clojure.string :as str])
-  (:import (java.util Date Locale)
-           (java.time Instant ZonedDateTime OffsetDateTime Duration Period LocalTime ZoneId DayOfWeek LocalDateTime YearMonth LocalDate Month Clock)
+  (:import (java.sql Timestamp)
+           (java.time Clock DayOfWeek Duration Instant LocalDate LocalDateTime LocalTime Month OffsetDateTime Period YearMonth ZonedDateTime)
+           (java.time.format TextStyle)
            (java.time.temporal TemporalAmount)
-           (java.sql Timestamp)
-           (java.time.format TextStyle)))
+           (java.util Date Locale)))
 
 (defonce ^Clock utc-clock (Clock/systemUTC))
 (def ^{:dynamic true :tag 'java.time.Clock} *clock*
@@ -252,20 +252,36 @@
                   (Month/of m)))))
        set))
 
+(defn- best-effort-month-day*
+  "https://stackoverflow.com/questions/39046324/adding-month-to-specific-day-of-month-with-java-time"
+  [month-day ^ZonedDateTime zdt]
+  (->> zdt
+       .toLocalDate
+       .lengthOfMonth
+       (min month-day)
+       (.withDayOfMonth zdt)))
+
 (defn every-month-at
+  "Returns an infinite sequence of ZonedDateTime objects one month apart,
+   starting with the next day-of-month & time specified. If the <month-day>
+   provided is greater than 28 or 30, will adjust the months that don't have
+   such indices per `(min month-day length-of-month)`."
   ([]
    (every-month-at 1))
   ([month-day]
    (every-month-at month-day (LocalTime/of 0 0)))
   ([^long month-day ^LocalTime lt]
-   (-> (LocalDateTime/of
-          (.withDayOfMonth (LocalDate/now) month-day)
-          lt)
-        (.adjustInto (ZonedDateTime/now ^Clock *clock*))
-       (periodic-seq (Period/ofMonths 1))
-       next)))
+   (map
+     (partial best-effort-month-day* month-day)
+     (-> (LocalDateTime/of
+           (.withDayOfMonth (LocalDate/now) month-day)
+           lt)
+         (.adjustInto (ZonedDateTime/now ^Clock *clock*))
+         (periodic-seq (Period/ofMonths 1))
+         next))))
 
 (defn some-months-at
+  "Similar to `chime.times/every-month-at`, but only for the months provided."
   ([months-set]
    (some-months-at months-set 1))
   ([months-set month-day]
@@ -284,5 +300,14 @@
                    .atEndOfMonth ;; `java.time` is awesome!
                    (LocalDateTime/of lt)
                    (ZonedDateTime/of (.getZone zdt))))))))
+
+(defn with-multiple-times
+  "Utility for wrapping an existing generator with multiple 'at' times."
+  [f at-times]
+  (->> at-times
+       (map #(LocalTime/parse ^String %))
+       sort
+       (map f)
+       (apply interleave)))
 ;;===========================================================
 

@@ -318,7 +318,7 @@
   (def vthread-factory
     "A `ThreadFactory` that produces virtual-threads."
     (-> (Thread/ofVirtual)
-        (.name "chime-" 1)
+        (.name "chime-" 0)
         .factory))
 
   ;; MUTABLE TIMES EXAMPLE
