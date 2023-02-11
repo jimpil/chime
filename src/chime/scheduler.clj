@@ -128,12 +128,12 @@
   "Returns a `java.time.Duration` representing the (time) distance
    from now (inclusive) until the next chime (exclusive) on this <scheduler>."
   ^Duration [scheduler]
-  (->> scheduler
-       upcoming-chimes-at
-       vals
-       sort
-       first
-       (Duration/between (times/now))))
+  (when-some [t (-> scheduler
+                    upcoming-chimes-at
+                    vals
+                    sort
+                    first)]
+    (Duration/between (times/now) t)))
 
 (comment
   (require '[chime.times :as times])
