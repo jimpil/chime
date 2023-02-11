@@ -4,7 +4,8 @@
   (:require [chime.schedule :as c]
             [chime.times :as times]
             [clojure.tools.logging :as log])
-  (:import (java.time Duration)))
+  (:import (clojure.lang Agent)
+           (java.time Duration)))
 
 (defn chiming-agent
   "Returns an `agent` dressed up as a scheduler.
@@ -23,6 +24,12 @@
           :meta {:on-finished on-finished
                  :error-handler error-handler
                  :thread-factory thread-factory})))
+
+(defmacro with-deref* [a]
+  `(let [a# ~a]
+     (if (instance? Agent a#)
+       (deref a#)
+       a#)))
 
 (defn- forget-on-finish!
   [scheduler id finish!]
@@ -62,7 +69,7 @@
   "Returns the ids of all the ongoing jobs of this <scheduler>,
    or nil if there aren't any."
   [scheduler]
-  (keys @scheduler))
+  (keys (with-deref* scheduler)))
 
 (defn- unschedule1
   [shutdown-fn jobs id]
@@ -73,15 +80,15 @@
 
 (defn- unschedule*
   [shutdown-fn jobs ids]
-  (reduce (partial unschedule1 shutdown-fn) jobs ids))
+  (let [ids (if (= ::all ids) (keys jobs) ids)]
+    (reduce (partial unschedule1 shutdown-fn) jobs ids)))
 
 (defn unschedule!
   "Given a <scheduler>, gracefully un-schedules (per `chime.schedule/shutdown!`)
    the jobs referred to by <ids>. Triggers the `:on-finished` handler
    (see `scheduler` ctor)."
   ([scheduler]
-   (->> (scheduled-ids scheduler)
-        (unschedule! scheduler)))
+   (unschedule! scheduler ::all)) ;; un-schedules everything
   ([scheduler ids]
    (unschedule! scheduler nil ids))
   ([scheduler dlay-millis ids]
@@ -94,8 +101,7 @@
 (defn unschedule-now!
   "Like `unschedule!`, but uses `chime.schedule/shutdown-now!`."
   ([scheduler]
-   (->> (scheduled-ids scheduler)
-        (unschedule-now! scheduler)))
+   (unschedule-now! scheduler :all)) ;; un-schedules everything
   ([scheduler ids]
    (unschedule-now! scheduler nil ids))
   ([scheduler dlay-millis ids]
@@ -109,12 +115,14 @@
   "Returns the next `ZonedDateTime` object
    when the job with <id> will chime."
   [scheduler id]
-  (some-> (get @scheduler id) c/next-at))
+  (let [state (with-deref* scheduler)]
+    (some-> (get state id) c/next-at)))
 
 (defn upcoming-chimes-at
   "Returns a map from job-id => ZonedDateTime."
   [scheduler]
-  (update-vals @scheduler c/next-at))
+  (let [state (with-deref* scheduler)]
+    (update-vals state c/next-at)))
 
 (defn until-next-chime
   "Returns a `java.time.Duration` representing the (time) distance
