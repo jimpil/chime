@@ -16,12 +16,13 @@
    as the first argument to all functions in this namespace."
   ([]
    (chiming-agent nil))
-  ([{:keys [error-handler on-finished thread-factory]
+  ([{:keys [error-handler on-finished on-aborted thread-factory]
      :or {error-handler c/default-error-handler}}]
    (agent {}
           :error-handler (fn [_ e] (log/warn e "`chiming-agent` error! Carrying-on with the schedule(s) ..."))
           ;; will become the options to `chime-at`
           :meta {:on-finished on-finished
+                 :on-aborted on-aborted
                  :error-handler error-handler
                  :thread-factory thread-factory})))
 
@@ -31,19 +32,24 @@
        (deref a#)
        a#)))
 
-(defn- forget-on-finish!
-  [scheduler id finish!]
+(defn- forget-on
+  [scheduler id handler!]
   (fn []
     (send-off scheduler dissoc id)
-    (when finish! (finish! id))))
+    (when handler! (handler! id))))
 
 (defn- schedule1
+  "Calls `(c/chime-at (times-fn) callback opts)`, where <opts>
+   is essentially the metadata of the <scheduler> (agent).
+   The `:on-finished` & `:on-aborted` handlers are enriched with
+   self-removal from the scheduler's state."
   [scheduler id times-fn callback]
-  (as-> id $OPTS
-        (partial forget-on-finish! scheduler $OPTS)
-        (update (meta scheduler) :on-finished $OPTS)
-        (update $OPTS :error-handler (fn [eh] (fn [e] (eh id e))))
-        (c/chime-at (times-fn) callback $OPTS)))
+  (let [forget-on! (partial forget-on scheduler id)
+        opts       (-> (meta scheduler)
+                       (update :error-handler (fn [eh] (fn [e] (eh id e))))
+                       (update :on-finished forget-on!)
+                       (update :on-aborted (fn [ah] (some-> ah forget-on!))))]
+    (c/chime-at (times-fn) callback opts)))
 
 (defn- schedule*
   [scheduler id->job]
@@ -85,8 +91,8 @@
 
 (defn unschedule!
   "Given a <scheduler>, gracefully un-schedules (per `chime.schedule/shutdown!`)
-   the jobs referred to by <ids>. Triggers the `:on-finished` handler
-   (see `scheduler` ctor)."
+   the jobs referred to by <ids>. Triggers the `:on-aborted` handler (if present)
+   otherwise the `:on-finished` one (see `scheduler` ctor)."
   ([scheduler]
    (unschedule! scheduler ::all)) ;; un-schedules everything
   ([scheduler ids]
@@ -138,6 +144,7 @@
 (comment
   (require '[chime.times :as times])
   (def SCHEDULER (chiming-agent {:on-finished #(println "Job" % "finished...")
+                                 :on-aborted #(println "Job" % "was aborted...")
                                  :thread-factory (-> (Thread/ofVirtual)
                                                      (.name "chime-" 0)
                                                      .factory)}))

@@ -63,11 +63,13 @@
   Returns an AutoCloseable that you can `.close` in order to shutdown the schedule.
   You can also deref the return value to wait for the schedule to finish.
 
-  When the schedule is either manually closed or exhausted, the <on-finished> callback will be called."
+  When the schedule is either manually closed (w/o an <on-aborted> callback) or exhausted,
+  the <on-finished> callback will be called. If <on-aborted> has been provided it will be
+  called instead (only on manual close)."
 
   (^AutoCloseable [times f] (chime-at times f nil))
 
-  (^AutoCloseable [times f {:keys [error-handler on-finished thread-factory clock drop-overruns? mutable?]
+  (^AutoCloseable [times f {:keys [error-handler on-finished on-aborted thread-factory clock drop-overruns? mutable?]
                             :or {error-handler  default-error-handler
                                  thread-factory default-thread-factory ;; loom-friendly (i.e. virtual threads)
                                  clock          times/*clock*
@@ -82,9 +84,9 @@
          f      (bound-fn* f)
          error! (bound-fn* error-handler)
          next-times (when-not mutable? (atom nil))]
-     (letfn [(close []
+     (letfn [(close [finished?]
                (.shutdown pool)
-               (when (and (deliver !latch ::done) on-finished)
+               (when (and (deliver !latch ::done) finished? on-finished)
                  (on-finished)))
 
              (schedule-loop [times]
@@ -105,7 +107,7 @@
                             (do
                               (cond->> times next-times (reset! next-times))
                               (schedule-loop times))
-                            (close)))]
+                            (close true)))]
 
                   (if curr-time
                     (let [dlay (->> (times/to-instant curr-time)
@@ -115,14 +117,18 @@
                         (->> (.schedule pool ^Runnable task dlay TimeUnit/MILLISECONDS)
                              (reset! current))
                         (recur times)))
-                    (close)))))]
+                    (close true)))))]
 
        ;; kick-off the schedule loop
        (schedule-loop times)
 
        (reify ;; the returned object represents 2 things
          AutoCloseable ;; whole-schedule
-         (close [_] (close))
+         (close [_]
+           (close false) ;; false here means the `on-finished` will NOT be called
+           ;; if we have an abort handler, use it now - otherwise use the finish one
+           (when-some [f (or on-aborted on-finished)]
+             (f)))
 
          IDeref ;; whole-schedule
          (deref [_] (deref !latch))
