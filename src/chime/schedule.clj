@@ -127,7 +127,9 @@
          (close [_]
            (close false) ;; false here means the `on-finished` will NOT be called
            ;; if we have an abort handler, use it now - otherwise use the finish one
-           (when-some [f (or on-aborted on-finished)]
+           (when-let [f (or on-aborted
+                             (and (not (done?)) ;; careful not to call `on-finished` a second time!
+                                  on-finished))]
              (f)))
 
          IDeref ;; whole-schedule
