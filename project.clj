@@ -1,4 +1,4 @@
-(defproject jimpil/chime "1.0.13-SNAPSHOT"
+(defproject jimpil/chime "1.0.13"
   :description "Flexible scheduling primitives for Clojure"
 
   :url "https://github.com/jimpil/chime"
