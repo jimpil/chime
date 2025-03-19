@@ -122,7 +122,7 @@ The project was forked in its `v0.3.2` state (actually a little later but not su
 
 ## Requirements 
 
-- Java 8 or above (for `java.time`)
+- Java 21 or above (for `java.time`)
 
 ## License
 

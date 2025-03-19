@@ -69,14 +69,19 @@
 
   (^AutoCloseable [times f] (chime-at times f nil))
 
-  (^AutoCloseable [times f {:keys [error-handler on-finished on-aborted thread-factory clock drop-overruns? mutable?]
+  (^AutoCloseable [times f {:keys [error-handler on-finished on-aborted ^ThreadFactory thread-factory clock drop-overruns? mutable?]
                             :or {error-handler  default-error-handler
                                  thread-factory default-thread-factory ;; loom-friendly (i.e. virtual threads)
                                  clock          times/*clock*
                                  mutable?       false}}]
    (let [times (cond-> times mutable? mutable-times)
          step* (if mutable? atom-step seq-step)
-         pool  (doto (ScheduledThreadPoolExecutor. 1 ^ThreadFactory thread-factory)
+         pool-size (if (-> thread-factory
+                           (.newThread (constantly nil))
+                           (.isVirtual))
+                     0 ;; don't pool virtual-threads!
+                     1)
+         pool  (doto (ScheduledThreadPoolExecutor. pool-size thread-factory)
                  (.setRemoveOnCancelPolicy true))
          !latch (promise)
          done?  (partial realized? !latch)
@@ -85,9 +90,9 @@
          error! (bound-fn* error-handler)
          next-times (when-not mutable? (atom nil))]
      (letfn [(close [finished?]
-               (.shutdown pool)
                (when (and (deliver !latch ::done) finished? on-finished)
-                 (on-finished)))
+                 (on-finished))
+               (.shutdown pool))
 
              (schedule-loop [times]
                (let [[curr-time times] (step* times)]
@@ -127,9 +132,8 @@
          (close [_]
            (when-not (done?) ;; aborting a finished schedule is meaningless
              (close false)   ;; false here means the `on-finished` will NOT be called
-             ;; if we have an abort handler, use it now - otherwise use the finish one
-             (when-some [f (or on-aborted on-finished)]
-               (f))))
+             ;; if we have an abort handler, use it now
+             (when on-aborted (on-aborted))))
 
          IDeref ;; whole-schedule
          (deref [_] (deref !latch))
