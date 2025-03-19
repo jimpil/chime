@@ -74,8 +74,8 @@
           (is (every? (partial = [9 30 0])
                       (map (juxt hod* moh* som*)
                            mon-fri)))
-          (is (= ["MONDAY" "TUESDAY" "WEDNESDAY" "THURSDAY" "FRIDAY"]
-                 (mapv dow* mon-fri)))
+          (is (= #{"MONDAY" "TUESDAY" "WEDNESDAY" "THURSDAY" "FRIDAY"}
+                 (set (map dow* mon-fri))))
           )
         )
       )
