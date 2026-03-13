@@ -88,7 +88,7 @@
          current (atom nil)
          f      (bound-fn* f)
          error! (bound-fn* error-handler)
-         next-times (when-not mutable? (atom nil))]
+         next-times (atom nil)]
      (letfn [(close [finished?]
                (when (and (deliver !latch ::done) finished? on-finished)
                  (on-finished))
@@ -110,7 +110,8 @@
                                       (log/error e "error calling chime error-handler, stopping schedule")))))
 
                             (do
-                              (cond->> times next-times (reset! next-times))
+                              ;(cond->> times next-times (reset! next-times))
+                              (reset! next-times (if mutable? (-> times deref seq) times))
                               (schedule-loop times))
                             (close true)))]
 
@@ -154,8 +155,8 @@
                  ;; don't forget to re-schedule starting
                  ;; with the job AFTER the cancelled one
                  (if mutable?
-                   (schedule-loop times)
-                   (schedule-loop (swap! next-times next))))
+                   (schedule-loop (mutable-times (swap! next-times rest)))
+                   (schedule-loop (swap! next-times rest))))
              ret)))
          (getDelay [_ time-unit] ;; expose remaining time until next chime
            (when-let [^ScheduledFuture fut @current]
@@ -164,37 +165,37 @@
          IAtom
          (swap [_ f]
            (if mutable?
-             (swap! times f)
+             (swap! next-times f)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
          (swap [_ f arg1]
            (if mutable?
-             (swap! times f arg1)
+             (swap! next-times f arg1)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
          (swap [_ f arg1 arg2]
            (if mutable?
-             (swap! times f arg1 arg2)
+             (swap! next-times f arg1 arg2)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
          (swap [_ f arg1 arg2 more]
            (if mutable?
-             (swap! times (partial apply f) arg1 arg2 more)
+             (swap! next-times (partial apply f) arg1 arg2 more)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
 
          IAtom2
          (swapVals [_ f]
            (if mutable?
-             (swap-vals! times f)
+             (swap-vals! next-times f)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
          (swapVals [_ f arg1]
            (if mutable?
-             (swap-vals! times f arg1)
+             (swap-vals! next-times f arg1)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
          (swapVals [_ f arg1 arg2]
            (if mutable?
-             (swap-vals! times f arg1 arg2)
+             (swap-vals! next-times f arg1 arg2)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
          (swapVals [_ f arg1 arg2 more]
            (if mutable?
-             (swap-vals! times (partial apply f) arg1 arg2 more)
+             (swap-vals! next-times (partial apply f) arg1 arg2 more)
              (throw (UnsupportedOperationException. "Schedule NOT mutable!"))))
 
          ;ISeq ;; whole schedule
