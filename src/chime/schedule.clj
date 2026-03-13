@@ -154,9 +154,9 @@
                           (not (done?)))
                  ;; don't forget to re-schedule starting
                  ;; with the job AFTER the cancelled one
-                 (if mutable?
-                   (schedule-loop (mutable-times (swap! next-times rest)))
-                   (schedule-loop (swap! next-times rest))))
+                 (cond-> (swap! next-times rest)
+                         mutable? mutable-times
+                         true schedule-loop))
              ret)))
          (getDelay [_ time-unit] ;; expose remaining time until next chime
            (when-let [^ScheduledFuture fut @current]
