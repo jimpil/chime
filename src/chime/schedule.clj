@@ -25,7 +25,7 @@
    true))
 
 (def ^:private seq-step
-  (juxt first next))
+  (juxt first rest))
 
 (defn- atom-step [a]
   (let [[old _] (swap-vals! a pop)]
