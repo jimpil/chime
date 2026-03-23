@@ -458,5 +458,6 @@
          :on-aborted #(println "aborted")})))
 
   (future-cancel sched)
+  (skip-next-n! sched 3)
   (.close sched)
   )
