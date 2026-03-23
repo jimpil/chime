@@ -17,15 +17,11 @@
    as the first argument to all functions in this namespace."
   ([]
    (chiming-agent nil))
-  ([{:keys [error-handler on-finished on-aborted thread-factory]
-     :or {error-handler c/default-error-handler}}]
+  ([opts]
    (agent {}
           :error-handler (fn [_ e] (log/warn e "`chiming-agent` error! Carrying-on with the schedule(s) ..."))
           ;; will become the options to `chime-at`
-          :meta {:on-finished on-finished
-                 :on-aborted on-aborted
-                 :error-handler error-handler
-                 :thread-factory thread-factory})))
+          :meta (update opts :error-handler #(or % c/default-error-handler)))))
 
 (defmacro with-deref* [a]
   `(let [a# ~a]
