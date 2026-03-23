@@ -219,7 +219,7 @@
          )))))
 
 (defn- chime-at-fixed*
-  [loop* ^long interval f {:keys [error-handler on-finished on-aborted ^ThreadFactory thread-factory clock initial-delay-supplier]
+  [loop-fn ^long interval f {:keys [error-handler on-finished on-aborted ^ThreadFactory thread-factory clock initial-delay-supplier]
                            :or {error-handler  default-error-handler
                                 thread-factory default-thread-factory ;; loom-friendly (i.e. virtual threads)
                                 clock          times/*clock*
@@ -254,7 +254,7 @@
                        (log/error e "error calling chime error-handler, stopping schedule")
                        (close! on-finished))))))
         schedule-loop (fn [^long dlay]
-                        (->> (loop* pool task dlay interval TimeUnit/MILLISECONDS)
+                        (->> (loop-fn pool task dlay interval TimeUnit/MILLISECONDS)
                              (reset! current)))]
     (schedule-loop (initial-delay-supplier)) ;; kick things off
     (reify ;; the returned object represents 2 things
@@ -294,7 +294,7 @@
    Like `chime-at` the schedule is considered finished when the task handler throws AND the error-handler doesn't return truthy.
    On the other hand, the schedule is considered aborted, when `.close()` is called on it."
   [^long interval f opts]
-  (-> (fn [^ScheduledThreadPoolExecutor pool task ^long dlay ^long interval ^TimeUnit time-unit]
+  (-> (fn [^ScheduledThreadPoolExecutor pool task dlay interval ^TimeUnit time-unit]
         (.scheduleAtFixedRate pool task dlay interval time-unit))
       (chime-at-fixed* interval f opts)))
 
@@ -304,7 +304,7 @@
    Like `chime-at` the schedule is considered finished when the task handler throws AND the error-handler doesn't return truthy.
    On the other hand, the schedule is considered aborted, when `.close()` is called on it."
   [interval f opts]
-  (-> (fn [^ScheduledThreadPoolExecutor pool task ^long dlay ^long interval ^TimeUnit time-unit]
+  (-> (fn [^ScheduledThreadPoolExecutor pool task dlay interval ^TimeUnit time-unit]
         (.scheduleWithFixedDelay pool task dlay interval time-unit))
       (chime-at-fixed* interval f opts)))
 

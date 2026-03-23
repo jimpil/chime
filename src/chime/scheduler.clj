@@ -172,7 +172,11 @@
                     times/every-n-seconds]
 
               :bar [(partial println "there")
-                    #(take 5 (times/every-n-millis 1500))]})
+                    #(take 5 (times/every-n-millis 1500))]
+
+              :baz [(partial println "BOO!")
+                    [:fixed-rate 1700]]
+              })
 
   (upcoming-chimes-at SCHEDULER)
   (until-next-chime SCHEDULER)
