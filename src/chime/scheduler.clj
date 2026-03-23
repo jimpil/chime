@@ -3,6 +3,7 @@
    Remembers actively scheduled jobs, until they finish, or are manually cancelled."
   (:require [chime.schedule :as c]
             [chime.times :as times]
+            [chime.util :as ut]
             [clojure.tools.logging :as log])
   (:import (clojure.lang Agent)
            (java.time Duration)))
@@ -36,7 +37,7 @@
   [scheduler id handler!]
   (fn []
     (send-off scheduler dissoc id)
-    (when handler! (handler! id))))
+    (ut/invoke-some handler! id)))
 
 (defn- schedule1
   "Calls `(c/chime-at (times-fn) callback opts)`, where <opts>

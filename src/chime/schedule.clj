@@ -1,7 +1,8 @@
 (ns chime.schedule
   "Lightweight scheduling library."
   (:require [clojure.tools.logging :as log]
-            [chime.times :as times])
+            [chime.times :as times]
+            [chime.util  :as ut])
   (:import (clojure.lang IDeref IBlockingDeref IPending ISeq IAtom2 PersistentQueue IAtom)
            (java.time Instant Clock ZonedDateTime)
            (java.time.temporal ChronoUnit)
@@ -106,7 +107,7 @@
      (letfn [(close! [f!]
                (when-not (done?)
                  (deliver !latch ::done)
-                 (and f! (f!))
+                 (ut/invoke-some f!)
                  (.shutdown pool)))
 
              (schedule-loop [times]
@@ -237,7 +238,7 @@
         close! (fn [f!]
                  (when-not (done?)
                    (deliver !latch ::done)
-                   (and f! (f!))
+                   (ut/invoke-some f!)
                    (.shutdown pool)))
         task (fn []
                (try
