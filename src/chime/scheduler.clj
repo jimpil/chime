@@ -49,7 +49,25 @@
                        (update :error-handler (fn [eh] (fn [e] (eh id e))))
                        (update :on-finished forget-on!)
                        (update :on-aborted (fn [ah] (some-> ah forget-on!))))]
-    (c/chime-at (times-fn) callback opts)))
+    (cond
+      (fn? times-fn)
+      (c/chime-at (times-fn) callback opts)
+
+      (int? times-fn)
+      (c/chime-at-fixed-rate times-fn callback opts)
+
+      (sequential? times-fn)
+      (let [[t1 t2] times-fn]
+        (if (keyword? t1)
+          (case t1
+            :fixed-rate  (c/chime-at-fixed-rate    t2 callback opts)
+            :fixed-delay (c/chime-with-fixed-delay t2 callback opts))
+          (c/chime-at times-fn callback opts)))
+      :else
+      (throw
+        (ex-info "Don't know how to produce the schedule times from the provided param-type."
+                 {:type  (type times-fn)
+                  :value times-fn})))))
 
 (defn- schedule*
   [scheduler id->job]
