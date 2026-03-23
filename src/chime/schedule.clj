@@ -103,10 +103,11 @@
          f      (bound-fn* f)
          error! (bound-fn* error-handler)
          next-times (atom nil)]
-     (letfn [(close [finished?]
-               (when (and (deliver !latch ::done) finished? on-finished)
-                 (on-finished))
-               (.shutdown pool))
+     (letfn [(close! [f!]
+               (when-not (done?)
+                 (deliver !latch ::done)
+                 (and f! (f!))
+                 (.shutdown pool)))
 
              (schedule-loop [times]
                (let [[curr-time times] (step* times)]
@@ -126,7 +127,7 @@
                             (do
                               (reset! next-times (if mutable? (-> times deref seq) times))
                               (schedule-loop times))
-                            (close true)))]
+                            (close! on-finished)))]
 
                   (if curr-time
                     (let [dlay (->> (times/to-instant curr-time)
@@ -136,18 +137,14 @@
                         (->> (.schedule pool ^Runnable task (max (long 0) dlay) TimeUnit/MILLISECONDS)
                              (reset! current))
                         (recur times))) ;; drop job that missed its target
-                    (close true)))))]
+                    (close! on-finished)))))]
 
        ;; kick-off the schedule loop
        (schedule-loop times)
 
        (reify ;; the returned object represents 2 things
          AutoCloseable ;; whole-schedule
-         (close [_]
-           (when-not (done?) ;; aborting a finished schedule is meaningless
-             (close false)   ;; false here means the `on-finished` will NOT be called
-             ;; if we have an abort handler, use it now
-             (when on-aborted (on-aborted))))
+         (close [_] (close! on-aborted))
 
          IDeref ;; whole-schedule
          (deref [_] (deref !latch))
@@ -243,8 +240,8 @@
         close! (fn [f!]
                  (when-not (done?)
                    (deliver !latch ::done)
-                   (.shutdown pool)
-                   (when f! (f!))))
+                   (and f! (f!))
+                   (.shutdown pool)))
         task (fn []
                (try
                  ;; simulate the fact that the schedule stops if the task-handler throws,
