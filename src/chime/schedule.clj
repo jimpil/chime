@@ -35,6 +35,21 @@
   [times]
   (atom (into PersistentQueue/EMPTY times)))
 
+(defn interruptable*
+  "Returns a function which wraps <f>
+   with a `Thread.isInterrupted()` check.
+   Worth considering when using `shutdown-now!` or `skip-next!`."
+  [f]
+  (fn [x]
+    (when-not (.isInterrupted (Thread/currentThread))
+      (f x))))
+
+(defmacro interruptable
+  "Like `interruptable*`, but for arbitrary code that
+   doesn't care about the argument passed to job-fns."
+  [& body]
+  `(interruptable* (fn [~'_] ~@body)))
+
 (defn chime-at
   "Calls <f> with the current time, at every time in the <times> sequence.
 
@@ -81,8 +96,7 @@
                            (.isVirtual))
                      0 ;; don't pool virtual-threads!
                      1)
-         pool  (doto (ScheduledThreadPoolExecutor. pool-size thread-factory)
-                 (.setRemoveOnCancelPolicy true))
+         pool   (ScheduledThreadPoolExecutor. pool-size thread-factory)
          !latch (promise)
          done?  (partial realized? !latch)
          current (atom nil)
@@ -110,7 +124,6 @@
                                       (log/error e "error calling chime error-handler, stopping schedule")))))
 
                             (do
-                              ;(cond->> times next-times (reset! next-times))
                               (reset! next-times (if mutable? (-> times deref seq) times))
                               (schedule-loop times))
                             (close true)))]
@@ -120,9 +133,9 @@
                                     (.between ChronoUnit/MILLIS (times/now clock)))]
                       (if (or (pos? dlay)
                               (not drop-overruns?))
-                        (->> (.schedule pool ^Runnable task dlay TimeUnit/MILLISECONDS)
+                        (->> (.schedule pool ^Runnable task (max (long 0) dlay) TimeUnit/MILLISECONDS)
                              (reset! current))
-                        (recur times)))
+                        (recur times))) ;; drop job that missed its target
                     (close true)))))]
 
        ;; kick-off the schedule loop
@@ -206,6 +219,81 @@
          ;(more [_] (some-> next-times deref rest))
 
          )))))
+
+(defn chime-at-fixed-rate
+  "A version of `chime-at`, optimized for non-mutable/infinite schedules using a fixed <interval> (in millis).
+   Like `chime-at` the schedule is considered finished when the task handler throws AND the error-handler doesn't return truthy.
+   On the other hand, the schedule is considered aborted, when `.close()` is called on it."
+  [^long interval f {:keys [error-handler on-finished on-aborted ^ThreadFactory thread-factory clock initial-delay-supplier]
+                     :or {error-handler  default-error-handler
+                          thread-factory default-thread-factory ;; loom-friendly (i.e. virtual threads)
+                          clock          times/*clock*
+                          initial-delay-supplier  (constantly 0)}}]
+  (let [pool-size (if (-> thread-factory
+                          (.newThread (constantly nil))
+                          (.isVirtual))
+                    0 ;; don't pool virtual-threads!
+                    1)
+        pool   (ScheduledThreadPoolExecutor. pool-size thread-factory)
+        !latch (promise)
+        done?  (partial realized? !latch)
+        f      (bound-fn* f)
+        error! (bound-fn* error-handler)
+        current (atom nil)
+        close! (fn [f!]
+                 (when-not (done?)
+                   (deliver !latch ::done)
+                   (.shutdown pool)
+                   (when f! (f!))))
+        task (fn []
+               (try
+                 ;; simulate the fact that the schedule stops if the task-handler throws,
+                 ;; AND the error-handler doesn't return truthy (or itself throws).
+                 (when-not (done?)
+                   (f (times/now clock)))
+                 (catch Exception e
+                   (try
+                     (when-not (error! e)
+                       (close! on-finished))
+                     (catch Exception e
+                       (log/error e "error calling chime error-handler, stopping schedule")
+                       (close! on-finished))))))
+        schedule-loop (fn [^long dlay]
+                        (->> (.scheduleAtFixedRate pool task dlay interval TimeUnit/MILLISECONDS)
+                             (reset! current)))]
+    (schedule-loop (initial-delay-supplier)) ;; kick things off
+    (reify ;; the returned object represents 2 things
+      AutoCloseable ;; whole-schedule
+      (close [_] (close! on-aborted))
+
+      IDeref ;; whole-schedule
+      (deref [_] (deref !latch))
+
+      IBlockingDeref ;; whole-schedule
+      (deref [_ ms timeout-val] (deref !latch ms timeout-val))
+
+      IPending ;; whole-schedule
+      (isRealized [_] (done?))
+
+      ScheduledFuture ;; next-job
+      (cancel [_ interrupt?] ;; expose interrupt facilities (opt-in)
+        (let [^ScheduledFuture fut @current
+              until-next (.getDelay fut TimeUnit/MILLISECONDS)
+              ret (or (.isCancelled fut)
+                      (.cancel fut interrupt?))]
+          (when (and (true? ret)
+                     (not (done?)))
+            ;; don't forget to re-schedule starting
+            ;; with the job AFTER the cancelled one
+            (schedule-loop (+ until-next interval)))
+          ret))
+
+      (getDelay [_ time-unit] ;; expose remaining time until next chime
+        (let [^ScheduledFuture fut @current]
+          (.getDelay fut time-unit)))
+      ))
+  )
+
 ;; HIGH-LEVEL API REFLECTING THE SEMANTICS OF THE CONSTRUCT ABOVE
 ;; ==============================================================
 
@@ -310,21 +398,6 @@
           ts))
       (append-with* sched)))
 
-(defn interruptable*
-  "Returns a function which wraps <f>
-   with a `Thread.isInterrupted()` check.
-   Worth considering when using `shutdown-now!` or `skip-next!`."
-  [f]
-  (fn [x]
-    (when-not (.isInterrupted (Thread/currentThread))
-      (f x))))
-
-(defmacro interruptable
-  "Like `interruptable*`, but for arbitrary code that
-   doesn't care about the argument passed to job-fns."
-  [& body]
-  `(interruptable* (fn [~'_] ~@body)))
-
 (comment
 
   (def vthread-factory
@@ -375,4 +448,18 @@
       (wait-for sch))
     )
 
+  (let [counter (atom 0)]
+    (def sched
+      (chime-at-fixed-rate
+        5000
+        (fn [x]
+          (when (not= 3 @counter) ;; return falsey the 4th time
+            (swap! counter inc)
+            (println x)))
+        {:thread-factory vthread-factory
+         :initial-delay-supplier #(* 1000 (inc (rand-int 10)))
+         :on-aborted #(println "aborted")})))
+
+  (future-cancel sched)
+  (.close sched)
   )
