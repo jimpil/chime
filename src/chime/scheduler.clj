@@ -6,7 +6,8 @@
             [chime.util :as ut]
             [clojure.tools.logging :as log])
   (:import (clojure.lang Agent)
-           (java.time Duration)))
+           (java.time Duration)
+           [java.util.concurrent ScheduledThreadPoolExecutor]))
 
 (defn chiming-agent
   "Returns an `agent` dressed up as a scheduler.
@@ -21,7 +22,9 @@
    (agent {}
           :error-handler (fn [_ e] (log/warn e "`chiming-agent` error! Carrying-on with the schedule(s) ..."))
           ;; will become the options to `chime-at`
-          :meta (update opts :error-handler #(or % c/default-error-handler)))))
+          :meta (-> opts
+                    (update :error-handler #(or % c/default-error-handler))
+                    (assoc :scheduled-executor (c/scheduled-exec (:thread-factory opts)))))))
 
 (defmacro with-deref* [a]
   `(let [a# ~a]
@@ -94,7 +97,7 @@
 
 (defn- unschedule1
   [shutdown-fn jobs id]
-  (if-let [scheduled (get jobs id)]
+  (if-some [scheduled (get jobs id)]
     (do (shutdown-fn scheduled)
         (dissoc jobs id))
     jobs))
@@ -106,8 +109,7 @@
 
 (defn unschedule!
   "Given a <scheduler>, gracefully un-schedules (per `chime.schedule/shutdown!`)
-   the jobs referred to by <ids>. Triggers the `:on-aborted` handler (if present)
-   otherwise the `:on-finished` one (see `scheduler` ctor)."
+   the jobs referred to by <ids>. Triggers the `:on-aborted` handler (if present)."
   ([scheduler]
    (unschedule! scheduler ::all)) ;; un-schedules everything
   ([scheduler ids]
@@ -127,10 +129,23 @@
    (unschedule-now! scheduler nil ids))
   ([scheduler dlay-millis ids]
    (let [f (fn [_] (send-off scheduler (partial unschedule* c/shutdown-now!) ids))]
-     (if (and dlay-millis (pos-int? dlay-millis))
+     (if (some-> dlay-millis pos-int?)
        (c/chime-at [(.plusMillis (times/now) dlay-millis)] f)
        (f nil))
      nil)))
+
+(defn shutdown!
+  "Shuts down the `ScheduledThreadPoolExecutor` backing this <scheduler>,
+   after aborting all its jobs. Nothing else can be scheduled after this operation."
+  [scheduler]
+  (let [{:keys [^ScheduledThreadPoolExecutor scheduled-executor]} (meta scheduler)]
+    (send-off scheduler
+              (fn [jobs]
+                ;; if we don't unschedule manually,
+                ;; the `on-aborted` handler won't fire
+                (let [ret (unschedule* c/shutdown! jobs (keys jobs))]
+                  (.shutdown scheduled-executor)
+                  ret)))))
 
 (defn upcoming-chime-at
   "Returns the next `ZonedDateTime` object
@@ -176,7 +191,7 @@
 
   (upcoming-chimes-at SCHEDULER)
   (until-next-chime SCHEDULER)
-  (unschedule! SCHEDULER nil [:foo])
+  (unschedule! SCHEDULER nil [:foo :baz])
   (scheduled-ids SCHEDULER) ;; => nil
 
   (->> (zipmap (range 1 51)
@@ -187,6 +202,6 @@
        (schedule! SCHEDULER))
 
   (unschedule! SCHEDULER)
-
+  (shutdown! SCHEDULER)
 
   )

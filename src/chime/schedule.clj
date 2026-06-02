@@ -51,6 +51,17 @@
   [& body]
   `(interruptable* (fn [~'_] ~@body)))
 
+(defn  scheduled-exec
+  ^ScheduledThreadPoolExecutor [thread-factory]
+  (let [^ThreadFactory thread-factory (or thread-factory default-thread-factory)]
+    (ScheduledThreadPoolExecutor.
+      (if (-> thread-factory
+              (.newThread (constantly nil))
+              (.isVirtual))
+        0 ;; don't pool virtual-threads!
+        1)
+      thread-factory)))
+
 (defn chime-at
   "Calls <f> with the current time, at every time in the <times> sequence.
 
@@ -85,30 +96,29 @@
 
   (^AutoCloseable [times f] (chime-at times f nil))
 
-  (^AutoCloseable [times f {:keys [error-handler on-finished on-aborted ^ThreadFactory thread-factory clock drop-overruns? mutable?]
+  (^AutoCloseable [times f {:keys [error-handler on-finished on-aborted scheduled-executor
+                                   ^ThreadFactory thread-factory clock drop-overruns? mutable?]
                             :or {error-handler  default-error-handler
                                  thread-factory default-thread-factory ;; loom-friendly (i.e. virtual threads)
                                  clock          times/*clock*
                                  mutable?       false}}]
    (let [times (cond-> times mutable? mutable-times)
          step* (if mutable? atom-step seq-step)
-         pool-size (if (-> thread-factory
-                           (.newThread (constantly nil))
-                           (.isVirtual))
-                     0 ;; don't pool virtual-threads!
-                     1)
-         pool   (ScheduledThreadPoolExecutor. pool-size thread-factory)
+         ^ScheduledThreadPoolExecutor pool (or scheduled-executor (scheduled-exec thread-factory))
          !latch (promise)
          done?  (partial realized? !latch)
          current (atom nil)
          f      (bound-fn* f)
          error! (bound-fn* error-handler)
-         next-times (atom nil)]
+         next-times (if mutable? times (atom nil))]
      (letfn [(close! [f!]
                (when-not (done?)
                  (deliver !latch ::done)
                  (ut/invoke-some f!)
-                 (.shutdown pool)))
+                 (when (nil? scheduled-executor)
+                   ;; shutdown the executor only if we created it - NOT the caller!
+                   ;; i.e. it is not global
+                   (.shutdown pool))))
 
              (schedule-loop [times]
                (let [[curr-time times] (step* times)]
@@ -125,9 +135,11 @@
                                     (catch Exception e
                                       (log/error e "error calling chime error-handler, stopping schedule")))))
 
-                            (do
-                              (reset! next-times (if mutable? (-> times deref seq) times))
-                              (schedule-loop times))
+                            (if mutable?
+                              (schedule-loop times)
+                              (schedule-loop (reset! next-times times)))
+
+
                             (close! on-finished)))]
 
                   (if curr-time
@@ -165,10 +177,15 @@
                           (not (done?)))
                  ;; don't forget to re-schedule starting
                  ;; with the job AFTER the cancelled one
-                 (cond-> (swap! next-times rest)
-                         mutable? mutable-times
-                         true schedule-loop))
+                 (schedule-loop
+                   (cond-> next-times
+                           (not mutable?) (swap! rest))))
              ret)))
+
+         (isDone [_]
+           (let [^ScheduledFuture fut @current]
+             (.isDone fut)))
+
          (getDelay [_ time-unit] ;; expose remaining time until next chime
            (when-let [^ScheduledFuture fut @current]
              (.getDelay fut time-unit)))
@@ -219,17 +236,13 @@
          )))))
 
 (defn- chime-at-fixed*
-  [loop-fn ^long interval f {:keys [error-handler on-finished on-aborted ^ThreadFactory thread-factory clock initial-delay-supplier]
+  [loop-fn ^long interval f {:keys [error-handler on-finished on-aborted scheduled-executor
+                                    ^ThreadFactory thread-factory clock initial-delay-supplier]
                            :or {error-handler  default-error-handler
                                 thread-factory default-thread-factory ;; loom-friendly (i.e. virtual threads)
                                 clock          times/*clock*
                                 initial-delay-supplier  (constantly 0)}}]
-  (let [pool-size (if (-> thread-factory
-                          (.newThread (constantly nil))
-                          (.isVirtual))
-                    0 ;; don't pool virtual-threads!
-                    1)
-        pool   (ScheduledThreadPoolExecutor. pool-size thread-factory)
+  (let [^ScheduledThreadPoolExecutor pool (or scheduled-executor (scheduled-exec thread-factory))
         !latch (promise)
         done?  (partial realized? !latch)
         f      (bound-fn* f)
@@ -239,7 +252,8 @@
                  (when-not (done?)
                    (deliver !latch ::done)
                    (ut/invoke-some f!)
-                   (.shutdown pool)))
+                   (when (nil? scheduled-executor)
+                     (.shutdown pool))))
         task (fn []
                (try
                  ;; simulate the fact that the schedule stops if the task-handler throws,
@@ -282,6 +296,10 @@
             ;; with the job AFTER the cancelled one
             (schedule-loop (+ until-next interval)))
           ret))
+
+      (isDone [_]
+        (let [^ScheduledFuture fut @current]
+          (.isDone fut)))
 
       (getDelay [_ time-unit] ;; expose remaining time until next chime
         (let [^ScheduledFuture fut @current]
@@ -343,7 +361,6 @@
   (into []
         (comp (map (fn [_] (skip-next! sched)))
               (take-while true?))
-
         (range n)))
 
 (defn shutdown!
@@ -407,7 +424,7 @@
    appends the result of `(offset-fn last-chime)` into it."
   [sched offset-fn]
   (-> (fn [ts]
-        (if-let [t (last ts)]
+        (if-some [t (last ts)]
           (conj ts (offset-fn t))
           ts))
       (append-with* sched)))
@@ -420,14 +437,31 @@
         (.name "chime-" 0)
         .factory))
 
-  ;; MUTABLE TIMES EXAMPLE
   (defn times []
     (->> (times/every-n-seconds 5)
          (take 10)
          ))
-  (def sched (chime-at (times) println {:thread-factory vthread-factory
-                                        :mutable? true
-                                      }))
+
+
+  ;; IMMUTABLE TIMES EXAMPLE
+  (def sched
+    (chime-at (times) println {:thread-factory vthread-factory
+                               :on-finished #(println "DONE!")
+                               :on-aborted #(println "ABORTED!")}))
+
+  (def sched
+    (chime-at-fixed-rate 5000 println {:thread-factory vthread-factory
+                                       :on-finished #(println "DONE!")
+                                       :on-aborted #(println "ABORTED!")}))
+
+  (skip-next-n! sched 2)
+
+  ;; MUTABLE TIMES EXAMPLE
+  (def sched
+    (chime-at (times) println {:thread-factory vthread-factory
+                               :on-finished #(println "DONE!")
+                               :on-aborted #(println "ABORTED!")
+                               :mutable? true}))
   (skip-next?! sched)
   (until-next sched)
   (append-relative-to-last! sched #(.plusSeconds ^Instant % 2))
