@@ -86,6 +86,11 @@
   [scheduler id->job]
   (send-off scheduler
     (fn [jobs]
+      (when-some [replacements (->> (keys id->job)
+                                    (select-keys jobs)
+                                    not-empty)]
+        ;; avoid memory-leaks when replacing jobs
+        (run! c/shutdown! (vals replacements)))
       (merge jobs (schedule* scheduler id->job)))))
 
 
@@ -143,7 +148,7 @@
               (fn [jobs]
                 ;; if we don't unschedule manually,
                 ;; the `on-aborted` handler won't fire
-                (let [ret (unschedule* c/shutdown! jobs (keys jobs))]
+                (let [ret (unschedule* c/shutdown! jobs ::all)]
                   (.shutdown scheduled-executor)
                   ret)))))
 
