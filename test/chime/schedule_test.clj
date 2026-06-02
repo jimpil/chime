@@ -1,8 +1,9 @@
 (ns chime.schedule-test
-  (:require [clojure.test   :refer :all]
+  (:require [clojure.test :refer :all]
             [chime.schedule :refer [chime-at] :as schedule]
-            [chime.channel  :refer [chime-ch]]
-            [chime.times :as times])
+            [chime.channel :refer [chime-ch]]
+            [chime.times :as times]
+            [clojure.tools.analyzer.passes :refer [schedule]])
   (:import (java.time Instant Duration)))
 
 (defn check-timeliness!
@@ -145,3 +146,53 @@
               {:on-finished (fn [] (reset! proof true))})
     (while (not @proof))
     (is @proof)))
+
+(deftest immutable-sanity-check
+  (let [factory  (-> (Thread/ofVirtual)
+                     (.name "chime-" 0)
+                     .factory)
+        state    (atom [])
+        rec      (partial swap! state conj)
+        instants (take 10 (times/every-n-seconds))
+        sched    (->> {:thread-factory factory
+                       :on-finished (partial rec "DONE!")
+                       :on-aborted  (partial rec "ABORTED!")}
+                      (chime-at instants rec))]
+    (is (every? true? (schedule/skip-next-n! sched 2)))
+    (is (false? (future-done? sched)))
+    (is (= :chime.schedule/done (schedule/wait-for sched)))
+    (is (true? (future-done? sched)))
+    ;; 10 (jobs) - 2 (skipped) + 1 (on-finished)
+    (is (= 9 (count @state)))
+    (is (= "DONE!" (peek @state)))))
+
+(deftest mutable-sanity-check
+  (let [factory  (-> (Thread/ofVirtual)
+                     (.name "chime-" 0)
+                     .factory)
+        state    (atom [])
+        rec      (partial swap! state conj)
+        instants (take 10 (times/every-n-seconds))
+        sched    (->> {:thread-factory factory
+                       :on-finished (partial rec "DONE!")
+                       :on-aborted  (partial rec "ABORTED!")
+                       :mutable? true}
+                      (chime-at instants rec))]
+    (is (true? (schedule/skip-next?! sched)))
+    (is (false? (future-done? sched)))
+    (schedule/append-relative-to-last! sched #(.plusSeconds ^Instant % 2))
+    (is (= :chime.schedule/done (schedule/wait-for sched)))
+    (is (true? (future-done? sched)))
+    ;; 10 (jobs) - 1 (skipped) + 1 (appended) + 1 (on-finished)
+    (is (= 11 (count @state)))
+    (is (= "DONE!" (peek @state)))
+    ;; assert that all pairs have a time-diff of 1 second
+    ;; except the last one which has 2 seconds
+    (let [pairs (partition 2 1 (butlast @state))
+          [[^Instant x ^Instant y] wo-last] ((juxt last butlast) pairs)
+          sec1 (Duration/ofSeconds 1)]
+      (is (= (Duration/ofSeconds 2)
+             (Duration/between x y)))
+      (is (every? (fn [[x y]]
+                    (= sec1 (Duration/between x y)))
+                  wo-last)))))

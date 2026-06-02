@@ -135,10 +135,9 @@
                                     (catch Exception e
                                       (log/error e "error calling chime error-handler, stopping schedule")))))
 
-                            (if mutable?
-                              (schedule-loop times)
-                              (schedule-loop (reset! next-times times)))
-
+                            (schedule-loop
+                              (cond->> times
+                                       (not mutable?) (reset! next-times)))
 
                             (close! on-finished)))]
 
@@ -153,7 +152,9 @@
                     (close! on-finished)))))]
 
        ;; kick-off the schedule loop
-       (schedule-loop times)
+       (schedule-loop
+         (cond->> times
+                  (not mutable?) (reset! next-times)))
 
        (reify ;; the returned object represents 2 things
          AutoCloseable ;; whole-schedule
@@ -455,6 +456,7 @@
                                        :on-aborted #(println "ABORTED!")}))
 
   (skip-next-n! sched 2)
+  (wait-for sched)
 
   ;; MUTABLE TIMES EXAMPLE
   (def sched
