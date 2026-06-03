@@ -1,9 +1,8 @@
 (ns chime.schedule-test
   (:require [clojure.test :refer :all]
             [chime.schedule :refer [chime-at] :as schedule]
-            [chime.channel :refer [chime-ch]]
-            [chime.times :as times]
-            [clojure.tools.analyzer.passes :refer [schedule]])
+            ;[chime.channel :refer [chime-ch]]
+            [chime.times :as times])
   (:import (java.time Instant Duration)))
 
 (defn check-timeliness!
@@ -98,12 +97,12 @@
                             (fn [now]
                               (swap! !proof conj now)
                               (Thread/sleep 3000))
-                            {:error-handler (fn [e]
-                                              (reset! !error e))
-                             :on-finished   (fn []
-                                              (deliver !latch nil))}))]
+                            {:drop-overruns? true
+                             :error-handler (fn [e] (reset! !error e))
+                             :on-aborted    (fn [] (deliver !latch ::done))}))]
       (Thread/sleep 2000)
-      (future-cancel sched)) ;; must be explicit!
+      ;; interrupt the task which is currently sleeping
+      (future-cancel sched))
 
     (is (not= ::timeout (deref !latch 500 ::timeout)))
     (is (= 1 (count @!proof)))
